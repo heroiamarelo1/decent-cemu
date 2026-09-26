@@ -427,7 +427,7 @@ static wxString PhoneLanLabel()
 		result = GetAdaptersAddresses(AF_INET, flags, nullptr, addresses, &size);
 	}
 	if (result != NO_ERROR)
-		return wxString("App: no network");
+		return wxString("No network");
 
 	wxString other;
 	for (auto* adapter = addresses; adapter; adapter = adapter->Next)
@@ -444,7 +444,7 @@ static wxString PhoneLanLabel()
 			const auto* bytes = reinterpret_cast<const unsigned char*>(&ipv4->sin_addr);
 			if (bytes[0] == 127 || (bytes[0] == 169 && bytes[1] == 254))
 				continue;
-			const wxString label = wxString::Format("App: %u.%u.%u.%u:26760", bytes[0], bytes[1], bytes[2], bytes[3]);
+			const wxString label = wxString::Format("%u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
 			const bool privateLan = bytes[0] == 10 || (bytes[0] == 192 && bytes[1] == 168) || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31);
 			if (privateLan)
 				return label;
@@ -452,7 +452,7 @@ static wxString PhoneLanLabel()
 				other = label;
 		}
 	}
-	return other.empty() ? wxString("App: no network") : other;
+	return other.empty() ? wxString("No network") : other;
 #else
 	return wxString();
 #endif

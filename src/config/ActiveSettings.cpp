@@ -66,7 +66,7 @@ bool ActiveSettings::DisplayDRCEnabled()
 
 CPUMode ActiveSettings::GetCPUMode()
 {
-	auto mode = g_current_game_profile->GetCPUMode().value_or(CPUMode::Auto);
+	auto mode = s_cpu_mode_for_launch.value_or(g_current_game_profile->GetCPUMode().value_or(CPUMode::Auto));
 
 	if (mode == CPUMode::Auto)
 	{

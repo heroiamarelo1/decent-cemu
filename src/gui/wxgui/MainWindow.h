@@ -38,18 +38,26 @@ public:
 		TITLE_MANAGER,
 		COMMAND_LINE, // -g parameter
 	};
+	enum class LAUNCH_MODE
+	{
+		DEFAULT,
+		FAST,
+		COMPATIBILITY,
+	};
 
-	wxLaunchGameEvent(fs::path path, INITIATED_BY initiatedBy)
-		: wxCommandEvent(wxEVT_LAUNCH_GAME), m_launchPath(path), m_initiatedBy(initiatedBy) {}
+	wxLaunchGameEvent(fs::path path, INITIATED_BY initiatedBy, LAUNCH_MODE launchMode = LAUNCH_MODE::DEFAULT)
+		: wxCommandEvent(wxEVT_LAUNCH_GAME), m_launchPath(path), m_initiatedBy(initiatedBy), m_launchMode(launchMode) {}
 
 	[[nodiscard]] fs::path GetPath() const { return m_launchPath; }
 	[[nodiscard]] INITIATED_BY GetInitiatedBy() const { return m_initiatedBy; }
+	[[nodiscard]] LAUNCH_MODE GetLaunchMode() const { return m_launchMode; }
 
 	wxEvent* Clone() const { return new wxLaunchGameEvent(*this); }
 
 private:
 	fs::path m_launchPath;
 	INITIATED_BY m_initiatedBy;
+	LAUNCH_MODE m_launchMode;
 };
 
 class MainWindow : public wxFrame, public CafeSystem::SystemImplementation
@@ -66,7 +74,7 @@ public:
 	void UpdateSettingsAfterGameLaunch();
 	void RestoreSettingsAfterGameExited();
 
-	bool FileLoad(const fs::path launchPath, wxLaunchGameEvent::INITIATED_BY initiatedBy);
+	bool FileLoad(const fs::path launchPath, wxLaunchGameEvent::INITIATED_BY initiatedBy, wxLaunchGameEvent::LAUNCH_MODE launchMode = wxLaunchGameEvent::LAUNCH_MODE::DEFAULT);
 
 	[[nodiscard]] bool IsGameLaunched() const { return m_game_launched; }
 
@@ -102,6 +110,7 @@ public:
 	void OnFileExit(wxCommandEvent& event);
 	void OnNFCMenu(wxCommandEvent& event);
 	void OnOptionsInput(wxCommandEvent& event);
+	void SyncInvertedSensorBarMenu();
 	void OnAccountSelect(wxCommandEvent& event);
 	void OnConsoleLanguage(wxCommandEvent& event);
 	void OnHelpAbout(wxCommandEvent& event);
@@ -144,7 +153,7 @@ public:
 	uintptr_t GetRenderCanvasHWND();
 
 	static void RequestGameListRefresh();
-	static void RequestLaunchGame(fs::path filePath, wxLaunchGameEvent::INITIATED_BY initiatedBy);
+	static void RequestLaunchGame(fs::path filePath, wxLaunchGameEvent::INITIATED_BY initiatedBy, wxLaunchGameEvent::LAUNCH_MODE launchMode = wxLaunchGameEvent::LAUNCH_MODE::DEFAULT);
 
 private:
 	bool FullscreenEnabled() const;
@@ -226,6 +235,8 @@ private:
 
 	wxMenuItem* m_fullscreenMenuItem{};
 	wxMenuItem* m_padViewMenuItem{};
+	wxMenuItem* m_gamepadAndroidItem{};
+	wxMenuItem* m_invertedBarItem{};
 
 	// tools
 	wxMenuItem* m_memorySearcherMenuItem{};

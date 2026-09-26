@@ -13,6 +13,7 @@
 #include "Cafe/GraphicPack/GraphicPack2.h"
 #include "HW/Latte/Renderer/RendererCore.h"
 #include "config/ActiveSettings.h"
+#include "config/CemuConfig.h"
 #include "WindowSystem.h"
 #include "Cafe/OS/libs/erreula/erreula.h"
 #include "input/InputManager.h"
@@ -1007,6 +1008,11 @@ void LatteRenderTarget_itHLECopyColorBufferToScanBuffer(MPTR colorBufferPtr, uin
 	togglePressedLast = togglePressed;
 
 	bool showDRC = swkbd_hasKeyboardInputHook() == false && (isDRCPrimary ^ altScreenRequested);
+	// Gamepad on Android keeps the television image on the main window.
+	// With the option off, the separate GamePad window is a normal window and
+	// the usual TV/GamePad swap stays in charge.
+	if (g_renderer->IsPadWindowActive() && GetConfig().gamepad_on_android.GetValue())
+		showDRC = false;
 
 	if ((renderTarget & RENDER_TARGET_DRC) && g_renderer->IsPadWindowActive())
 		LatteRenderTarget_copyToBackbuffer(texView, true);

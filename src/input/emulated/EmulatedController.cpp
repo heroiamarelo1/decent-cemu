@@ -84,6 +84,36 @@ void EmulatedController::start_rumble()
 	}
 }
 
+void EmulatedController::set_speaker(int command)
+{
+	std::shared_lock lock(m_mutex);
+	for (const auto& controller : m_controllers)
+		controller->set_speaker(command);
+}
+
+bool EmulatedController::is_speaker_enabled() const
+{
+	std::shared_lock lock(m_mutex);
+	return std::any_of(m_controllers.cbegin(), m_controllers.cend(), [](const auto& c) { return c->is_speaker_enabled(); });
+}
+
+bool EmulatedController::can_send_speaker() const
+{
+	std::shared_lock lock(m_mutex);
+	return std::any_of(m_controllers.cbegin(), m_controllers.cend(), [](const auto& c) { return c->can_send_speaker(); });
+}
+
+bool EmulatedController::send_speaker_data(const uint8* data, uint32 size)
+{
+	std::shared_lock lock(m_mutex);
+	for (const auto& controller : m_controllers)
+	{
+		if (controller->send_speaker_data(data, size))
+			return true;
+	}
+	return false;
+}
+
 void EmulatedController::stop_rumble()
 {
 	if (!m_rumble)
@@ -181,6 +211,40 @@ bool EmulatedController::has_position() const
 {
 	std::shared_lock lock(m_mutex);
 	return std::any_of(m_controllers.cbegin(), m_controllers.cend(), [](const auto& c) {return c->has_position(); });
+}
+
+bool EmulatedController::has_touch_position() const
+{
+	std::shared_lock lock(m_mutex);
+	return std::any_of(m_controllers.cbegin(), m_controllers.cend(), [](const auto& c) { return c->has_touch(); });
+}
+
+glm::vec2 EmulatedController::get_touch_position() const
+{
+	std::shared_lock lock(m_mutex);
+	for (const auto& controller : m_controllers)
+	{
+		if (controller->has_touch())
+			return controller->get_touch_position();
+	}
+	return {};
+}
+
+bool EmulatedController::has_magnet() const
+{
+	std::shared_lock lock(m_mutex);
+	return std::any_of(m_controllers.cbegin(), m_controllers.cend(), [](const auto& c) { return c->has_magnet(); });
+}
+
+glm::vec3 EmulatedController::get_magnet() const
+{
+	std::shared_lock lock(m_mutex);
+	for (const auto& controller : m_controllers)
+	{
+		if (controller->has_magnet())
+			return controller->get_magnet();
+	}
+	return {};
 }
 
 glm::vec2 EmulatedController::get_position() const

@@ -3010,8 +3010,9 @@ bool VulkanRenderer::UpdateSwapchainProperties(bool mainWindow)
 		{
 			RecreateSwapchain(mainWindow);
 		}
-		catch (std::exception&)
+		catch (const std::exception& ex)
 		{
+			cemuLog_log(LogType::Force, "Vulkan swapchain recreate failed: {}", ex.what());
 			cemu_assert_debug(false);
 			return false;
 		}
@@ -3081,6 +3082,9 @@ void VulkanRenderer::SwapBuffer(bool mainWindow)
 	VkResult result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
 	if (result < 0 && result != VK_ERROR_OUT_OF_DATE_KHR)
 	{
+		cemuLog_log(LogType::Force, "Vulkan present failed: {} window={}", (int)result, mainWindow ? "tv" : "pad");
+		chainInfo.hasDefinedSwapchainImage = false;
+		chainInfo.swapchainImageIndex = -1;
 		throw std::runtime_error(fmt::format("Failed to present image: {}", result));
 	}
 	if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)

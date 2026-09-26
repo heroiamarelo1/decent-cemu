@@ -73,6 +73,9 @@ public:
 
 	void apply_game_profile();
 	void on_device_changed();
+	// When enabled, connected Wiimotes fill WPAD channels from the first and the LED matches that player.
+	void assign_wiimotes();
+	void create_missing_wiimote_profiles(const std::vector<size_t>& devices);
 
 
 	static std::vector<std::string> get_profiles();

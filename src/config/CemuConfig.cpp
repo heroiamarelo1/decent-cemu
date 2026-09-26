@@ -283,6 +283,11 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	auto dsuc = input.get("DSUC");
 	dsu_client.host = dsuc.get_attribute("host", dsu_client.host);
 	dsu_client.port = dsuc.get_attribute("port", dsu_client.port);
+	wiimote_auto_assign = input.get("WiimoteAutoAssign", wiimote_auto_assign.GetInitValue());
+	inverted_sensor_bar = input.get("InvertedSensorBar", inverted_sensor_bar.GetInitValue());
+	gamepad_on_android = input.get("GamepadOnAndroid", gamepad_on_android.GetInitValue());
+	pad_second_monitor = input.get("PadSecondMonitor", pad_second_monitor.GetInitValue());
+	pad_audio_second_monitor = input.get("PadAudioSecondMonitor", pad_audio_second_monitor.GetInitValue());
 
 	// emulatedusbdevices
 	auto usbdevices = parser.get("EmulatedUsbDevices");
@@ -448,6 +453,11 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	auto dsuc = input.set("DSUC");
 	dsuc.set_attribute("host", dsu_client.host);
 	dsuc.set_attribute("port", dsu_client.port);
+	input.set("WiimoteAutoAssign", wiimote_auto_assign.GetValue());
+	input.set("InvertedSensorBar", inverted_sensor_bar.GetValue());
+	input.set("GamepadOnAndroid", gamepad_on_android.GetValue());
+	input.set("PadSecondMonitor", pad_second_monitor.GetValue());
+	input.set("PadAudioSecondMonitor", pad_audio_second_monitor.GetValue());
 
 	// emulated usb devices
 	auto usbdevices = config.set("EmulatedUsbDevices");

@@ -137,21 +137,28 @@ public:
 	void getVPADGyroChange(float gyro[3])
 	{
 		// filter noise
-		if (fabs(gyro[0]) < 0.012f)
-			gyro[0] = 0.0f;
-		if (fabs(gyro[1]) < 0.012f)
-			gyro[1] = 0.0f;
-		if (fabs(gyro[2]) < 0.012f)
-			gyro[2] = 0.0f;
+		float filtered[3]{m_gyro[0], m_gyro[1], m_gyro[2]};
+		if (fabs(filtered[0]) < 0.012f)
+			filtered[0] = 0.0f;
+		if (fabs(filtered[1]) < 0.012f)
+			filtered[1] = 0.0f;
+		if (fabs(filtered[2]) < 0.012f)
+			filtered[2] = 0.0f;
 		// convert
-		gyro[0] = _radToOrientation(-m_gyro[0]);
-		gyro[1] = _radToOrientation(-m_gyro[1]);
-		gyro[2] = _radToOrientation(m_gyro[2]);
+		gyro[0] = _radToOrientation(-filtered[0]);
+		// Flipping this Y rate for the Android app did not change Donkey Kong's car.
+		// Leave the generic sign. The held tilt is tested on the roll angle below.
+		gyro[1] = _radToOrientation(-filtered[1]);
+		gyro[2] = _radToOrientation(filtered[2]);
 	}
+
+	// Android device adapter for lateral acceleration and screen-normal gyro rate.
+	// Raw fusion coordinates and the attitude matrix stay unchanged.
+	void setVPADAccelerometerXInverted(bool inverted) { m_invertVPADAccX = inverted; }
 
 	void getVPADAccelerometer(float acc[3])
 	{
-		acc[0] = -m_acc[0];
+		acc[0] = m_invertVPADAccX ? m_acc[0] : -m_acc[0];
 		acc[1] = -m_acc[1];
 		acc[2] = m_acc[2];
 	}
@@ -226,6 +233,17 @@ public:
 		gyro[2] = m_gyro[2];
 	}
 
+	// Rotation integrated at the sensor report rate, in the gyrometer axes, and the
+	// time it covers. A reader that polls less often compares two samples.
+	// A time of zero means the source does not provide it.
+	void setGyroIntegral(const glm::quat& rotation, double time)
+	{
+		m_gyroIntegral = rotation;
+		m_gyroIntegralTime = time;
+	}
+	const glm::quat& getGyroIntegral() const { return m_gyroIntegral; }
+	double getGyroIntegralTime() const { return m_gyroIntegralTime; }
+
 private:
 	static float _radToOrientation(float rad)
 	{
@@ -241,8 +259,11 @@ private:
 	float m_gyro[3]{};
 	float m_acc[3]{};
 	float m_accAcceleration{};
+	bool m_invertVPADAccX = false;
 	float m_orientation[3]{};
 	float m_q[4]{};
+	glm::quat m_gyroIntegral{1.0f, 0.0f, 0.0f, 0.0f};
+	double m_gyroIntegralTime = 0.0;
 	// calculated values
 	float m_accMagnitude{};
 };

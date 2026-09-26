@@ -1,4 +1,5 @@
 #include "input/emulated/VPADController.h"
+#include "input/api/DSU/DSUControllerProvider.h"
 #include "input/api/Controller.h"
 #ifdef HAS_SDL
 #include "input/api/SDL/SDLController.h"
@@ -7,6 +8,14 @@
 #include "input/InputManager.h"
 #include "Cafe/HW/Latte/Core/Latte.h"
 #include "Cafe/CafeSystem.h"
+
+#include <cmath>
+#include <chrono>
+#include <cstdio>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 enum ControllerVPADMapping2 : uint32
 {
@@ -138,6 +147,14 @@ void VPADController::VPADRead(VPADStatus_t& status, const BtnRepeat& repeat)
 	// touch
 	update_touch(status);
 
+	if (has_magnet())
+	{
+		const auto magnet = get_magnet();
+		status.magnet.x = magnet.x;
+		status.magnet.y = magnet.y;
+		status.magnet.z = magnet.z;
+	}
+
 	// motion
 	status.dir.x = {1, 0, 0};
 	status.dir.y = {0, 1, 0};
@@ -195,9 +212,9 @@ void VPADController::update_touch(VPADStatus_t& status)
 
 	auto& instance = InputManager::instance();
 	bool pad_view;
-	if (has_position())
+	if (has_touch_position())
 	{
-		const auto mouse = get_position();
+		const auto mouse = get_touch_position();
 
 		status.tpData.touch = kTpTouchOn;
 		status.tpData.validity = kTpValid;
@@ -234,6 +251,80 @@ void VPADController::update_touch(VPADStatus_t& status)
 
 	status.tpProcessed1 = status.tpData;
 	status.tpProcessed2 = status.tpData;
+}
+
+static void WriteMotionDebug(MotionSample& sample, const VPADStatus_t& status, bool held)
+{
+#if defined(_WIN32)
+	using clock = std::chrono::steady_clock;
+	static clock::time_point last{};
+	const auto now = clock::now();
+	if (now - last < std::chrono::milliseconds(100))
+		return;
+	last = now;
+
+	wchar_t path[MAX_PATH]{};
+	if (GetModuleFileNameW(nullptr, path, MAX_PATH) == 0)
+		return;
+	wchar_t* slash = wcsrchr(path, L'\\');
+	if (!slash)
+		return;
+	*(slash + 1) = 0;
+	if (wcslen(path) + 24 >= MAX_PATH)
+		return;
+	wcscat_s(path, L"gamepad-motion.txt");
+
+	float acc[3]{};
+	float gyro[3]{};
+	sample.getAccelerometer(acc);
+	sample.getGyrometer(gyro);
+	const float ax = std::fabs(acc[0]);
+	const float ay = std::fabs(acc[1]);
+	const float az = std::fabs(acc[2]);
+	const char* axis = "X";
+	float dominant = acc[0];
+	if (ay > ax && ay >= az)
+	{
+		axis = "Y";
+		dominant = acc[1];
+	}
+	else if (az > ax && az > ay)
+	{
+		axis = "Z";
+		dominant = acc[2];
+	}
+	FILE* file = nullptr;
+	if (_wfopen_s(&file, path, L"w") != 0 || !file)
+		return;
+	std::fprintf(file,
+		"gravity %c%s\n"
+		"fusion_acc %.3f %.3f %.3f\n"
+		"fusion_gyro_dps %.2f %.2f %.2f\n"
+		"game_acc %.3f %.3f %.3f\n"
+		"game_gyro %.4f %.4f %.4f\n"
+		"orient %.3f %.3f %.3f\n"
+		"dir_x %.3f %.3f %.3f\n"
+		"dir_y %.3f %.3f %.3f\n"
+		"dir_z %.3f %.3f %.3f\n"
+		"hold %d\n"
+		"phone_edge %s\n",
+		dominant < 0.0f ? '-' : '+', axis,
+		acc[0], acc[1], acc[2],
+		gyro[0] * 57.2958f, gyro[1] * 57.2958f, gyro[2] * 57.2958f,
+		(float)status.acc.x, (float)status.acc.y, (float)status.acc.z,
+		(float)status.gyroChange.x, (float)status.gyroChange.y, (float)status.gyroChange.z,
+		(float)status.gyroOrientation.x, (float)status.gyroOrientation.y, (float)status.gyroOrientation.z,
+		(float)status.dir.x.x, (float)status.dir.x.y, (float)status.dir.x.z,
+		(float)status.dir.y.x, (float)status.dir.y.y, (float)status.dir.y.z,
+		(float)status.dir.z.x, (float)status.dir.z.y, (float)status.dir.z.z,
+		held ? 1 : 0,
+		AndroidPadEdgeName());
+	std::fclose(file);
+#else
+	(void)sample;
+	(void)status;
+	(void)held;
+#endif
 }
 
 void VPADController::update_motion(VPADStatus_t& status)
@@ -278,6 +369,55 @@ void VPADController::update_motion(VPADStatus_t& status)
 		status.dir.z.x = attitude[6];
 		status.dir.z.y = attitude[7];
 		status.dir.z.z = attitude[8];
+
+		// A phone gyro keeps a little rate while it is lying on the table.
+		// The fusion turns that into a walking orientation, and Nintendo Land
+		// rejects the calibration. Hold the pose that was current when the
+		// pad became still, and publish a zero rate until it actually moves.
+		const float holdRate = std::sqrt(gyroChange.x * gyroChange.x + gyroChange.y * gyroChange.y + gyroChange.z * gyroChange.z);
+		// About 3 deg/s. Wide enough for a phone lying on the table, and narrow
+		// enough that a real tilt is not frozen and then released as a jump.
+		const bool resting = holdRate < 0.008f &&
+			status.accMagnitude > 0.85f && status.accMagnitude < 1.15f;
+		if (resting)
+		{
+			if (!m_motion_hold)
+			{
+				m_motion_hold = true;
+				m_hold_orient[0] = gyroOrientation.x;
+				m_hold_orient[1] = gyroOrientation.y;
+				m_hold_orient[2] = gyroOrientation.z;
+				m_hold_acc[0] = acc.x;
+				m_hold_acc[1] = acc.y;
+				m_hold_acc[2] = acc.z;
+				m_hold_acc_mag = status.accMagnitude;
+				for (int i = 0; i < 9; ++i)
+					m_hold_dir[i] = attitude[i];
+			}
+			status.gyroChange.x = 0;
+			status.gyroChange.y = 0;
+			status.gyroChange.z = 0;
+			status.gyroOrientation.x = m_hold_orient[0];
+			status.gyroOrientation.y = m_hold_orient[1];
+			status.gyroOrientation.z = m_hold_orient[2];
+			status.acc.x = m_hold_acc[0];
+			status.acc.y = m_hold_acc[1];
+			status.acc.z = m_hold_acc[2];
+			status.accMagnitude = m_hold_acc_mag;
+			status.accAcceleration = 0;
+			status.dir.x.x = m_hold_dir[0];
+			status.dir.x.y = m_hold_dir[1];
+			status.dir.x.z = m_hold_dir[2];
+			status.dir.y.x = m_hold_dir[3];
+			status.dir.y.y = m_hold_dir[4];
+			status.dir.y.z = m_hold_dir[5];
+			status.dir.z.x = m_hold_dir[6];
+			status.dir.z.y = m_hold_dir[7];
+			status.dir.z.z = m_hold_dir[8];
+		}
+		else
+			m_motion_hold = false;
+		WriteMotionDebug(motionSample, status, m_motion_hold);
 		return;
 	}
 
@@ -351,6 +491,21 @@ void VPADController::update_motion(VPADStatus_t& status)
 		status.accXY = {1.0f, 0.0f};
 
 		m_lastGyroRotation = {rotX, rotY, rotZ};
+	}
+	else
+	{
+		// No motion sensor. The lie-still check needs 1G and a real pose.
+		// Zero acceleration and a zero matrix never settle. Screen down matches
+		// the picture: +Z out of the screen points into the table.
+		status.acc = {0.0f, 0.0f, -1.0f};
+		status.accMagnitude = 1.0f;
+		status.accAcceleration = 0.0f;
+		status.accXY = {0.0f, -1.0f};
+		status.gyroChange = {0.0f, 0.0f, 0.0f};
+		status.gyroOrientation = {-0.5f, -0.5f, 0.5f};
+		status.dir.x = {1.0f, 0.0f, 0.0f};
+		status.dir.y = {0.0f, -1.0f, 0.0f};
+		status.dir.z = {0.0f, 0.0f, -1.0f};
 	}
 }
 
@@ -674,6 +829,47 @@ bool VPADController::set_default_mapping(const std::shared_ptr<ControllerBase>& 
 			{kButtonId_StickR_Right, kRotationXP},
 		};
 		
+		break;
+	}
+	case InputAPI::DSUClient:
+	{
+		// Phone GamePad. South button is Cross, which is Wii U B.
+		mapping =
+		{
+			{kButtonId_A, kButton13},
+			{kButtonId_B, kButton14},
+			{kButtonId_X, kButton12},
+			{kButtonId_Y, kButton15},
+
+			{kButtonId_L, kButton10},
+			{kButtonId_R, kButton11},
+			{kButtonId_ZL, kButton8},
+			{kButtonId_ZR, kButton9},
+
+			{kButtonId_Plus, kButton3},
+			{kButtonId_Minus, kButton0},
+			{kButtonId_Home, kButton17},
+			{kButtonId_Mic, kButton18},
+			{kButtonId_Screen, kButton19},
+
+			{kButtonId_Up, kButton4},
+			{kButtonId_Right, kButton5},
+			{kButtonId_Down, kButton6},
+			{kButtonId_Left, kButton7},
+
+			{kButtonId_StickL, kButton1},
+			{kButtonId_StickR, kButton2},
+
+			{kButtonId_StickL_Up, kAxisYP},
+			{kButtonId_StickL_Down, kAxisYN},
+			{kButtonId_StickL_Left, kAxisXN},
+			{kButtonId_StickL_Right, kAxisXP},
+
+			{kButtonId_StickR_Up, kRotationYP},
+			{kButtonId_StickR_Down, kRotationYN},
+			{kButtonId_StickR_Left, kRotationXN},
+			{kButtonId_StickR_Right, kRotationXP},
+		};
 		break;
 	}
 	}

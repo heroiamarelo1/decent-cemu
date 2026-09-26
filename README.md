@@ -1,49 +1,26 @@
-# **Cemu - Wii U emulator**
+# Decent Cemu - The Cemu that sorts it out
 
-[![Build Process](https://github.com/cemu-project/Cemu/actions/workflows/build.yml/badge.svg)](https://github.com/cemu-project/Cemu/actions/workflows/build.yml)
-[![Discord](https://img.shields.io/discord/286429969104764928?label=Cemu&logo=discord&logoColor=FFFFFF)](https://discord.gg/5psYsup)
-[![Matrix Server](https://img.shields.io/matrix/cemu:cemu.info?server_fqdn=matrix.cemu.info&label=cemu:cemu.info&logo=matrix&logoColor=FFFFFF)](https://matrix.to/#/#cemu:cemu.info)
+![Nintendo Land](banner.png)
 
-This is the code repository of Cemu, a Wii U emulator that is able to run most Wii U games and homebrew in a playable state.
-It's written in C/C++ and is being actively developed with new features and fixes.
+This is a fork of [Cemu 2.6](https://github.com/cemu-project/Cemu). It is not an official Cemu release.
 
-Cemu is currently only available for 64-bit Windows, Linux & macOS devices.
+## What it has
 
-### Links:
- - [Open Source Announcement](https://www.reddit.com/r/cemu/comments/wwa22c/cemu_20_announcement_linux_builds_opensource_and/)
- - [Official Website](https://cemu.info)
- - [Compatibility List/Wiki](https://wiki.cemu.info/wiki/Main_Page)
- - [Official Subreddit](https://reddit.com/r/Cemu)
- - [Official Discord](https://discord.gg/5psYsup)
- - [Official Matrix Server](https://matrix.to/#/#cemu:cemu.info)
- - [Setup Guide](https://cemu.cfw.guide)
+- Native Wii Remote, MotionPlus and Nunchuk support, with automatic setup
+- An Android app that acts as the GamePad, including gyroscope (beta — help is welcome), touchscreen and audio
+- A MotionPlus infrared simulator for a remote pointed at the floor (Minus + B turns it on and off)
+- Fixes for Wii Sports Club and Wii Party U. Launch them by right-clicking the game and choosing **Start (Compatibility Mode)**
 
-#### Other relevant repositories:
- - [Cemu-Language](https://github.com/cemu-project/Cemu-Language)
- - [Cemu's Community Graphic Packs](https://github.com/cemu-project/cemu_graphic_packs)
+The phone and the PC have to be on the same network. In Cemu, **Gamepad on Android** keeps the large GamePad window for the phone. With that option off, the GamePad opens as a normal window.
 
-## Download
+## Android app
 
-You can download the latest Cemu releases for Windows, Linux and Mac from the [GitHub Releases](https://github.com/cemu-project/Cemu/releases/). For Linux you can also find Cemu on [Flathub](https://flathub.org/apps/info.cemu.Cemu).
+The phone app is in [`gamepad-android`](gamepad-android). Its name is Decent Cemu Controller. It is licensed under the [MIT License](gamepad-android/LICENSE).
 
-On Windows, Cemu is available both as an installer and in a portable format, where no installation is required besides extracting it in a safe place.
+The Cemu code stays under the original [Mozilla Public License 2.0](LICENSE.txt).
 
-The native macOS build is currently purely experimental and should not be considered stable or ready for issue-free gameplay. There are also known issues with degraded performance due to the use of MoltenVK and Rosetta for ARM Macs. We appreciate your patience while we improve Cemu for macOS.
+This was vibe-coded. I do not morally authorize the official development team to use my code, because of their anti-artificial-intelligence policy, and because the Discord mod is an idiot who is going to stay single for the rest of his life.
 
-Pre-2.0 releases can be found on Cemu's [changelog page](https://cemu.info/changelog.html).
+## Build
 
-## Build Instructions
-
-To compile Cemu yourself on Windows, Linux or macOS, view [BUILD.md](/BUILD.md).
-
-## Issues
-
-Issues with the emulator should be filed using [GitHub Issues](https://github.com/cemu-project/Cemu/issues).  
-The old bug tracker can be found at [bugs.cemu.info](https://bugs.cemu.info) and still contains relevant issues and feature suggestions.
-
-## Contributing
-
-If you want to contribute you can take a look at our [contribution guidelines](/CONTRIBUTING.md).
-
-## License
-Cemu is licensed under [Mozilla Public License 2.0](/LICENSE.txt). Exempt from this are all files in the dependencies directory for which the licenses of the original code apply as well as some individual files in the src folder, as specified in those file headers respectively.
+See [BUILD.md](BUILD.md).

@@ -313,6 +313,8 @@ void InputAPIAddWindow::on_controllers_refreshed(wxCommandEvent& event)
 			item_selected = true;
 		}
 	}
+	if (available_controllers.empty())
+		controllers->ChangeValue(wxEmptyString);
 }
 
 void InputAPIAddWindow::discard_thread_result()

@@ -463,34 +463,29 @@ bool _livenessRangeStartCompare(raLivenessRange* lhs, raLivenessRange* rhs)
 
 void _sortSegmentAllSubrangesLinkedList(IMLSegment* imlSegment)
 {
-	raLivenessRange* subrangeList[4096 + 1];
-	sint32 count = 0;
+	std::vector<raLivenessRange*> subrangeList;
 	// disassemble linked list
 	raLivenessRange* subrangeItr = imlSegment->raInfo.linkedList_allSubranges;
 	while (subrangeItr)
 	{
-		cemu_assert(count < 4096);
-		subrangeList[count] = subrangeItr;
-		count++;
+		subrangeList.emplace_back(subrangeItr);
 		// next
 		subrangeItr = subrangeItr->link_allSegmentRanges.next;
 	}
-	if (count == 0)
+	if (subrangeList.empty())
 	{
 		imlSegment->raInfo.linkedList_allSubranges = nullptr;
 		return;
 	}
 	// sort
-	std::sort(subrangeList, subrangeList + count, _livenessRangeStartCompare);
+	std::sort(subrangeList.begin(), subrangeList.end(), _livenessRangeStartCompare);
 	// reassemble linked list
-	subrangeList[count] = nullptr;
 	imlSegment->raInfo.linkedList_allSubranges = subrangeList[0];
 	subrangeList[0]->link_allSegmentRanges.prev = nullptr;
-	subrangeList[0]->link_allSegmentRanges.next = subrangeList[1];
-	for (sint32 i = 1; i < count; i++)
+	for (size_t i = 0; i < subrangeList.size(); ++i)
 	{
-		subrangeList[i]->link_allSegmentRanges.prev = subrangeList[i - 1];
-		subrangeList[i]->link_allSegmentRanges.next = subrangeList[i + 1];
+		subrangeList[i]->link_allSegmentRanges.prev = i == 0 ? nullptr : subrangeList[i - 1];
+		subrangeList[i]->link_allSegmentRanges.next = i + 1 == subrangeList.size() ? nullptr : subrangeList[i + 1];
 	}
 	// validate list
 #if DEBUG_RA_EXTRA_VALIDATION

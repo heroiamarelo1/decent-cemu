@@ -25,12 +25,15 @@ private:
 
 	void on_volume_change(wxCommandEvent& event);
 	void on_extension_change(wxCommandEvent& event);
+	void on_auto_change(wxCommandEvent& event);
     void on_pair_button(wxCommandEvent& event);
 
 	wxGridBagSizer* m_item_sizer;
 
 	wxCheckBox* m_nunchuck, * m_classic;
 	wxCheckBox* m_motion_plus;
+	wxCheckBox* m_auto_detect;
+	std::weak_ptr<WiimoteController> m_current_wiimote;
 
 	wxSlider* m_volume;
 

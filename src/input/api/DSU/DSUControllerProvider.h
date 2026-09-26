@@ -55,6 +55,10 @@ public:
 		PortInfoData info{};
 		DataResponseData data{};
 		MotionSample motion_sample{};
+		bool has_magnet = false;
+		float magnet[3]{};
+		bool mic_down = false;
+		bool screen_down = false;
 
 		ControllerState& operator=(const PortInfo& port_info);
 		ControllerState& operator=(const DataResponse& data_response);
@@ -114,3 +118,7 @@ private:
 	std::array<WiiUMotionHandler, kMaxClients> m_motion_handler;
 	std::array<uint64, kMaxClients> m_last_motion_timestamp{};
 };
+
+// Screen edge the Android GamePad last reported as down. 0 means unknown.
+void AndroidPadEdgeSet(uint8 edge);
+const char* AndroidPadEdgeName();

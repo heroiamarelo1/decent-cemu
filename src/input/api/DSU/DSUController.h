@@ -1,6 +1,8 @@
 #pragma once
 
 #include "input/api/Controller.h"
+
+#include <chrono>
 #include "input/api/DSU/DSUControllerProvider.h"
 #include "Cafe/HW/AI/AI.h"
 #include "Cafe/HW/AI/AI.h"
@@ -30,6 +32,10 @@ public:
 	MotionSample get_motion_sample() override;
 
 	bool has_position() override;
+	bool has_touch() override;
+	glm::vec2 get_touch_position() override;
+	bool has_magnet() override;
+	glm::vec3 get_magnet() override;
 	glm::vec2 get_position() override;
 	glm::vec2 get_prev_position() override;
 	PositionVisibility GetPositionVisibility() override;
@@ -41,5 +47,8 @@ protected:
 
 private:
 	uint32 m_index;
+	// Aim offset from screen center, in roughly screen-widths, from the phone gyro.
+	glm::vec2 m_aim{};
+	std::chrono::steady_clock::time_point m_aim_time{};
 };
 

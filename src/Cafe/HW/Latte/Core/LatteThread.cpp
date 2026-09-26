@@ -112,7 +112,22 @@ void LatteThread_HandleOSScreen()
 		g_renderer->SwapBuffers(swapTV, swapDRC);
 }
 
+static int Latte_ThreadEntryImpl();
+
 int Latte_ThreadEntry()
+{
+	try
+	{
+		return Latte_ThreadEntryImpl();
+	}
+	catch (const std::exception& ex)
+	{
+		cemuLog_log(LogType::Force, "GPU thread stopped: {}", ex.what());
+		return 0;
+	}
+}
+
+static int Latte_ThreadEntryImpl()
 {
 	SetThreadName("LatteThread");
 	sint32 w,h;

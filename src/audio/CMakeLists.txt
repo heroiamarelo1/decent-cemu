@@ -3,6 +3,8 @@ add_library(CemuAudio
 	IAudioAPI.h
 	IAudioInputAPI.cpp
 	IAudioInputAPI.h
+	GamePadAudioStream.cpp
+	GamePadAudioStream.h
 )
 
 set_property(TARGET CemuAudio PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -17,6 +19,13 @@ if(WIN32)
 		XAudio2API.h
 		XAudio27API.cpp
 		XAudio27API.h
+		MonitorAudioRouting.cpp
+		MonitorAudioRouting.h
+	)
+else()
+	target_sources(CemuAudio PRIVATE
+		MonitorAudioRouting.cpp
+		MonitorAudioRouting.h
 	)
 endif()
 

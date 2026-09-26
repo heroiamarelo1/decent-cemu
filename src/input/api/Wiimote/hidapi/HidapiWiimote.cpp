@@ -29,15 +29,18 @@ std::vector<WiimoteDevicePtr> HidapiWiimote::get_devices() {
     std::vector<WiimoteDevicePtr> wiimote_devices;
     SDL_hid_init();
     const auto device_enumeration = SDL_hid_enumerate(WIIMOTE_VENDOR_ID, 0x0);
+    if (!device_enumeration)
+        cemuLog_logOnce(LogType::Force, "Wiimote HID enumerate found no devices for vendor {:#06x}", WIIMOTE_VENDOR_ID);
 
     for (auto it = device_enumeration; it != nullptr; it = it->next){
         if (it->product_id != WIIMOTE_PRODUCT_ID && it->product_id != WIIMOTE_MP_PRODUCT_ID)
             continue;
-        if (std::wcscmp(it->product_string, PRO_CONTROLLER_NAME) == 0)
+        if (it->product_string && std::wcscmp(it->product_string, PRO_CONTROLLER_NAME) == 0)
             continue;
         auto dev = SDL_hid_open_path(it->path);
         if (!dev){
-            cemuLog_logDebug(LogType::Force, "Unable to open Wiimote device at {}: {}", it->path, SDL_GetError());
+            // First failure only: later passes often fail because we already hold the handle.
+            cemuLog_logOnce(LogType::Force, "Unable to open Wiimote HID device {}: {}", it->path, SDL_GetError());
         }
         else {
             SDL_hid_set_nonblocking(dev, true);

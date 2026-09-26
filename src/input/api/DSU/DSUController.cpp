@@ -1,5 +1,6 @@
 #include "input/api/DSU/DSUController.h"
 
+#include <algorithm>
 #include <boost/program_options/value_semantic.hpp>
 
 DSUController::DSUController(uint32 index)
@@ -40,6 +41,7 @@ void DSUController::load(const pugi::xml_node& node)
 
 	const auto provider = InputManager::instance().get_api_provider(api(), settings);
 	update_provider(std::dynamic_pointer_cast<DSUControllerProvider>(provider));
+	set_use_motion(true);
 	connect();
 }
 
@@ -62,23 +64,67 @@ MotionSample DSUController::get_motion_sample()
 	return m_provider->get_motion_sample(m_index);
 }
 
-bool DSUController::has_position()
+bool DSUController::has_touch()
 {
 	const auto state = m_provider->get_state(m_index);
 	return state.data.tpad1.active || state.data.tpad2.active;
 }
 
-glm::vec2 DSUController::get_position()
+glm::vec2 DSUController::get_touch_position()
 {
-	// touchpad resolution is 1920x942
 	const auto state = m_provider->get_state(m_index);
 	if (state.data.tpad1.active)
 		return glm::vec2{(float)state.data.tpad1.x / 1920.0f, (float)state.data.tpad1.y / 942.0f};
+	if (state.data.tpad2.active)
+		return glm::vec2{(float)state.data.tpad2.x / 1920.0f, (float)state.data.tpad2.y / 942.0f};
+	return {};
+}
 
+bool DSUController::has_magnet()
+{
+	return m_provider->get_state(m_index).has_magnet;
+}
+
+glm::vec3 DSUController::get_magnet()
+{
+	const auto state = m_provider->get_state(m_index);
+	return {state.magnet[0], state.magnet[1], state.magnet[2]};
+}
+
+bool DSUController::has_position()
+{
+	const auto state = m_provider->get_state(m_index);
+	if (state.data.tpad1.active || state.data.tpad2.active)
+		return true;
+	return state.info.state == DsState::Connected;
+}
+
+glm::vec2 DSUController::get_position()
+{
+	const auto state = m_provider->get_state(m_index);
+	if (state.data.tpad1.active)
+		return glm::vec2{(float)state.data.tpad1.x / 1920.0f, (float)state.data.tpad1.y / 942.0f};
 	if (state.data.tpad2.active)
 		return glm::vec2{(float)state.data.tpad2.x / 1920.0f, (float)state.data.tpad2.y / 942.0f};
 
-	return {};
+	// Hold the phone like a remote. Yaw moves the cursor sideways, pitch moves it up
+	// and down. WiiMoteDSU's recenter control is the touch button.
+	if (state.data.touch || HAS_BIT(state.data.state1, 1))
+		m_aim = {};
+	float gyro[3]{};
+	m_provider->get_motion_sample(m_index).getGyrometer(gyro);
+	const auto now = std::chrono::steady_clock::now();
+	float dt = 0.0f;
+	if (m_aim_time != std::chrono::steady_clock::time_point{})
+		dt = std::chrono::duration<float>(now - m_aim_time).count();
+	m_aim_time = now;
+	if (dt > 0.0f && dt < 0.1f)
+	{
+		constexpr float kGain = 0.55f;
+		m_aim.x = std::clamp(m_aim.x + gyro[1] * dt * kGain, -0.85f, 0.85f);
+		m_aim.y = std::clamp(m_aim.y - gyro[0] * dt * kGain, -0.85f, 0.85f);
+	}
+	return glm::vec2{0.5f + m_aim.x, 0.5f + m_aim.y};
 }
 
 glm::vec2 DSUController::get_prev_position()
@@ -97,7 +143,9 @@ PositionVisibility DSUController::GetPositionVisibility()
 {
 	const auto state = m_provider->get_prev_state(m_index);
 
-	return (state.data.tpad1.active || state.data.tpad2.active) ? PositionVisibility::FULL : PositionVisibility::NONE;
+	if (state.data.tpad1.active || state.data.tpad2.active || state.info.state == DsState::Connected)
+		return PositionVisibility::FULL;
+	return PositionVisibility::NONE;
 }
 
 std::string DSUController::get_button_name(uint64 button) const
@@ -123,6 +171,9 @@ std::string DSUController::get_button_name(uint64 button) const
 	case kButton15: return "Square";
 
 	case kButton16: return "Touch";
+	case kButton17: return "PS";
+	case kButton18: return "Mic";
+	case kButton19: return "TV";
 	}
 	return base_type::get_button_name(button);
 }
@@ -158,6 +209,12 @@ ControllerState DSUController::raw_state()
 
 	if (state.data.touch)
 		result.buttons.SetButtonState(kButton16, true);
+	if (state.data.ps)
+		result.buttons.SetButtonState(kButton17, true);
+	if (state.mic_down)
+		result.buttons.SetButtonState(kButton18, true);
+	if (state.screen_down)
+		result.buttons.SetButtonState(kButton19, true);
 
 	result.axis.x = (float)state.data.lx / std::numeric_limits<uint8>::max();
 	result.axis.x = (result.axis.x * 2.0f) - 1.0f;

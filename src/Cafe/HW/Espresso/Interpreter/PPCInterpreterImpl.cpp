@@ -3,6 +3,45 @@
 #include "Cafe/HW/Espresso/Debugger/Debugger.h"
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 
+// Diagnostic history for invalid guest writes in the CPU interpreter. This is
+// intentionally small so a full-interpreter run can identify the caller and
+// register changes without logging every executed instruction.
+namespace
+{
+	struct InterpreterTraceEntry
+	{
+		uint32 ip;
+		uint32 opcode;
+		uint32 r3;
+		uint32 r6;
+		uint32 r31;
+		uint32 lr;
+	};
+	thread_local InterpreterTraceEntry s_interpreterTrace[32]{};
+	thread_local uint32 s_interpreterTraceCount = 0;
+	thread_local bool s_interpreterTraceDumped = false;
+
+	void RecordInterpreterInstruction(PPCInterpreter_t* cpu, uint32 opcode)
+	{
+		auto& entry = s_interpreterTrace[s_interpreterTraceCount++ % 32];
+		entry = {cpu->instructionPointer, opcode, cpu->gpr[3], cpu->gpr[6], cpu->gpr[31], cpu->spr.LR};
+	}
+
+	void ReportInvalidInterpreterWrite(PPCInterpreter_t* cpu, uint32 address)
+	{
+		if (address >= 0x10000 || s_interpreterTraceDumped)
+			return;
+		s_interpreterTraceDumped = true;
+		cemuLog_log(LogType::Force, "Interpreter low guest write: address={:08x} ip={:08x} r3={:08x} r6={:08x} r31={:08x} lr={:08x}", address, cpu->instructionPointer, cpu->gpr[3], cpu->gpr[6], cpu->gpr[31], cpu->spr.LR);
+		const uint32 available = std::min(s_interpreterTraceCount, 32u);
+		for (uint32 i = 0; i < available; ++i)
+		{
+			const auto& e = s_interpreterTrace[(s_interpreterTraceCount - available + i) % 32];
+			cemuLog_log(LogType::Force, "Interpreter trace: ip={:08x} opcode={:08x} r3={:08x} r6={:08x} r31={:08x} lr={:08x}", e.ip, e.opcode, e.r3, e.r6, e.r31, e.lr);
+		}
+	}
+}
+
 class PPCItpCafeOSUsermode
 {
 public:
@@ -31,6 +70,7 @@ public:
 
 	inline static void ppcMem_writeDataU32(PPCInterpreter_t* hCPU, uint32 address, uint32 v)
 	{
+		ReportInvalidInterpreterWrite(hCPU, address);
 		*(uint32*)(memory_getPointerFromVirtualOffset(address)) = CPU_swapEndianU32(v);
 	}
 
@@ -449,6 +489,8 @@ public:
 #endif
 
 		uint32 opcode = ppcItpCtrl::memory_readCodeU32(hCPU, hCPU->instructionPointer);
+		if constexpr (!ppcItpCtrl::allowSupervisorMode)
+			RecordInterpreterInstruction(hCPU, opcode);
 
 		switch ((opcode >> 26))
 		{

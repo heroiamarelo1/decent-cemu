@@ -84,6 +84,7 @@ public:
 
 	// cpu
 	[[nodiscard]] static CPUMode GetCPUMode();
+	static void SetCPUModeForLaunch(std::optional<CPUMode> mode) { s_cpu_mode_for_launch = mode; }
 	[[nodiscard]] static uint8 GetTimerShiftFactor();
 
 	static void SetTimerShiftFactor(uint8 shiftFactor);
@@ -124,6 +125,7 @@ public:
 	[[nodiscard]] static bool ForceSamplerRoundToPrecision();
 
 private:
+	inline static std::optional<CPUMode> s_cpu_mode_for_launch{};
 	inline static bool s_setPathsCalled = false;
 	// dump options
 	inline static bool s_dump_shaders = false;

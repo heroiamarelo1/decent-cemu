@@ -2,6 +2,8 @@
 #include "Cafe/OS/libs/snd_core/ax_internal.h"
 #include "Cafe/HW/MMU/MMU.h"
 #include "audio/IAudioAPI.h"
+#include "audio/GamePadAudioStream.h"
+#include "audio/MonitorAudioRouting.h"
 //#include "ax.h"
 #include "config/CemuConfig.h"
 
@@ -326,6 +328,17 @@ namespace snd_core
 		}
 	}
 
+	void SubmitGamePadPcm(const sint16* bigEndianInterleaved, sint32 frames)
+	{
+		if (frames <= 0 || frames > AX_SAMPLES_MAX)
+			return;
+		sint16 host[AX_SAMPLES_MAX * 2];
+		const sint32 samples = frames * 2;
+		for (sint32 i = 0; i < samples; ++i)
+			host[i] = _swapEndianS16(bigEndianInterleaved[i]);
+		GamePadAudioStream_Submit(host, frames);
+	}
+
 	void AXOut_SubmitDRCFrame(sint32 frameIndex)
 	{
 		sint32 numSamples = AIGetSamplesPerChannel(AX_DEV_DRC);
@@ -353,6 +366,14 @@ namespace snd_core
 				inputChannel2++;
 				inputChannel3++;
 			}
+			sint16 stereo[AX_SAMPLES_MAX * 2];
+			const sint16* six = AIGetCurrentDMABuffer(AX_DEV_DRC);
+			for (sint32 i = 0; i < numSamples; i++)
+			{
+				stereo[i * 2] = six[i * 6];
+				stereo[i * 2 + 1] = six[i * 6 + 1];
+			}
+			SubmitGamePadPcm(stereo, numSamples);
 			AIInitDRCDMA(__AXDRCDMABuffers[frameIndex], numSamples * 6 * sizeof(sint16)); // 6ch output
 		}
 		else if (__AXMode[AX_DEV_DRC] == AX_MODE_STEREO)
@@ -370,6 +391,7 @@ namespace snd_core
 				inputChannel1++;
 			}
 
+			SubmitGamePadPcm(__AXDRCDMABuffers[frameIndex], numSamples);
 			AIInitDRCDMA(__AXDRCDMABuffers[frameIndex], numSamples * 2 * sizeof(sint16)); // 2ch output
 		}
 		else if (__AXMode[AX_DEV_DRC] == AX_MODE_MONO)
@@ -384,6 +406,7 @@ namespace snd_core
 				// next sample
 				inputChannel0++;
 			}
+			SubmitGamePadPcm(__AXDRCDMABuffers[frameIndex], numSamples);
 			AIInitDRCDMA(__AXDRCDMABuffers[frameIndex], numSamples * 2 * sizeof(sint16)); // 1ch (output as stereo)
 		}
 		else
@@ -398,6 +421,9 @@ namespace snd_core
 	{
 
 		numQueuedFramesSndGeneric = 0;
+
+		if (GetConfig().pad_audio_second_monitor.GetValue())
+			MonitorAudioRouting::ApplyToConfig(true);
 
 		std::unique_lock lock(g_audioMutex);
 		if (!g_tvAudio)

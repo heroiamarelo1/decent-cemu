@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 
 // https://wiibrew.org/wiki/Wiimote
 
@@ -39,6 +40,7 @@ enum RegisterAddress : uint32
 	kRegisterExtensionCalibration = 0x4a40020,
 
 	kRegisterMotionPlusDetect = 0x4a600fa,
+	kRegisterMotionPlusCalibration = 0x4a60020,
 	kRegisterMotionPlusInit = 0x4a600f0,
 	kRegisterMotionPlusEnable = 0x4a600fe,
 };
@@ -46,6 +48,7 @@ enum RegisterAddress : uint32
 enum ExtensionType : uint64
 {
 	kExtensionNunchuck = 0x0000A4200000,
+	kExtensionNunchuckDolphinBar = 0xFF00A4200000,
 	kExtensionClassic = 0x0000A4200101,
 	kExtensionClassicPro = 0x0100A4200101,
 	kExtensionDrawsome = 0xFF00A4200013,
@@ -55,6 +58,8 @@ enum ExtensionType : uint64
 
 	kExtensionMotionPlusInactive = 0xa4200005,
 	kExtensionMotionPlus = 0xa6200005,
+	kExtensionMotionPlusIntegrated = 0x0100A6200005,
+	kExtensionMotionPlusIntegratedDolphinBar = 0x0100A4200005,
 
 	kExtensionPartialyInserted = 0xffffffffffff,
 };
@@ -79,6 +84,7 @@ enum StatusBitmask : uint8
 
 enum OutputReportId : uint8
 {
+	kRumble = 0x10, // rumble-only; LSBit of first payload byte is the motor
 	kLED = 0x11,
 	kType = 0x12,
 	kIR = 0x13,
@@ -201,6 +207,10 @@ struct IRCamera
 
 struct NunchuchCalibration : Calibration
 {
+	// Used when the calibration block cannot be read, for example behind an active MotionPlus.
+	// A Nunchuk reads about 0x200 at 0 g and 0x2CC at 1 g (10-bit).
+	NunchuchCalibration() { gravity = { 0x2CC, 0x2CC, 0x2CC }; }
+
 	glm::vec<2, uint8> min{};
 	glm::vec<2, uint8> center{ 0x7f, 0x7f };
 	glm::vec<2, uint8> max{ 0xff, 0xff };
@@ -208,19 +218,63 @@ struct NunchuchCalibration : Calibration
 
 struct MotionPlusData
 {
-	Calibration calibration{};
+	struct CalibrationBlock
+	{
+		glm::vec<3, uint16> zero{};  // yaw, roll, pitch
+		glm::vec<3, uint16> scale{}; // yaw, roll, pitch
+		uint8 degrees_div_6 = 0;
+	};
+	CalibrationBlock fast_calibration{}, slow_calibration{};
+	bool calibration_valid = false;
+	// Set only after the enable write is queued. Register reads of the Nunchuk
+	// have to finish before this, because an active MotionPlus does not pass them through.
+	bool activated = false;
 
-	glm::vec3 orientation; // yaw, roll, pitch
+	glm::vec3 orientation; // yaw, roll, pitch raw 14-bit counts
+	glm::vec3 angular_velocity{}; // pitch, roll, yaw, in radians/second
+	bool has_last_rate = false;
+	glm::vec3 last_rate{}; // rad/s, same order as angular_velocity
+	// Only a suspicious range transition waits for confirmation.
+	bool has_held_rate = false;
+	glm::vec3 held_rate{};
+	std::chrono::steady_clock::time_point held_timestamp{}, last_gyro_timestamp{}, last_sample_tick{};
+	glm::vec3 last_integrated_rate{};
+	uint8 last_slow_flags = 0;
+	uint32 rejected_spikes = 0, timing_gaps = 0;
+	// Low-frequency transport diagnostics; no per-report file writes.
+	std::chrono::steady_clock::time_point quality_last_log{};
+	float quality_dt_min = 1.0f, quality_dt_max = 0.0f, quality_dt_sum = 0.0f;
+	float quality_peak_rate = 0.0f;
+	uint32 quality_samples = 0, quality_bunched = 0, quality_delayed = 0;
+	uint32 quality_range_changes = 0;
+	bool rest_initialized = false;
+	std::chrono::steady_clock::time_point rest_started{}, rest_blocked_until{};
+	glm::vec3 rest_gravity{};
+	glm::vec2 rest_ir{};
+	bool rest_has_ir = false;
 	bool slow_roll = false;
 	bool slow_pitch = false;
 	bool slow_yaw = false;
 	bool extension_connected = false;
+
+	// Zero offset learned while the gyro holds steady. The factory zero of some
+	// MotionPlus attachments is off by more than the fusion's own bias filter accepts.
+	glm::vec3 rest_offset{};
+	glm::vec3 rest_sum{}, rest_min{}, rest_max{};
+	uint32 rest_samples = 0;
 };
 
 struct NunchuckData
 {
 	glm::vec3 acceleration{}, prev_acceleration{};
 	NunchuchCalibration calibration{};
+	bool calibration_valid = false;
+	bool calibration_requested = false;
+	// True after the calibration read has been accepted or discarded.
+	bool calibration_finished = false;
+	// True only after the extension identifier itself says this is a Nunchuk.
+	// A MotionPlus detect may create a placeholder before that identifier arrives.
+	bool identified = false;
 
 	bool c = false;
 	bool z = false;

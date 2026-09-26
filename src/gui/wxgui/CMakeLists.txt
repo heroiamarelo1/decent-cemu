@@ -74,6 +74,8 @@ add_library(CemuWxGui STATIC
   input/InputAPIAddWindow.h
   input/InputSettings2.cpp
   input/InputSettings2.h
+  input/WiimoteCalibrationFrame.cpp
+  input/WiimoteCalibrationFrame.h
   input/panels/ClassicControllerInputPanel.cpp
   input/panels/ClassicControllerInputPanel.h
   input/panels/InputPanel.cpp
@@ -96,6 +98,8 @@ add_library(CemuWxGui STATIC
   MemorySearcherTool.h
   PadViewFrame.cpp
   PadViewFrame.h
+  GamePadViewStream.cpp
+  GamePadViewStream.h
   TitleManager.cpp
   TitleManager.h
   wxCemuConfig.cpp
@@ -196,3 +200,8 @@ endif()
 if(ALLOW_PORTABLE)
 	target_compile_definitions(CemuWxGui PRIVATE CEMU_ALLOW_PORTABLE)
 endif ()
+
+if(WIN32)
+	add_executable(PadCapture PadCapture.cpp)
+	target_compile_features(PadCapture PRIVATE cxx_std_20)
+endif()

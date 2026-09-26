@@ -113,14 +113,23 @@ public:
 	uint32 get_emulated_button_flag(WPADDataFormat format, uint32 id) const;
 
 	virtual WPADDeviceType get_device_type() const = 0;
+	// What the game's probe and KPAD sample should say. MotionPlus stays available
+	// even when this reports a plain Nunchuk.
+	virtual WPADDeviceType reported_device_type() const { return get_device_type(); }
 
 	WPADDataFormat get_data_format() const { return m_data_format; }
-	void set_data_format(WPADDataFormat data_format) { m_data_format = data_format; }
+	void set_data_format(WPADDataFormat data_format)
+	{
+		m_data_format = data_format;
+		m_format_from_game = true;
+	}
 
 	void WPADRead(WPADStatus_t* status);
 
 	void KPADRead(KPADStatus_t& status, const BtnRepeat& repeat);
 	virtual bool is_mpls_attached() { return false; }
+	// 14-bit MotionPlus counts: pitch, yaw, roll. Rest is near 8192.
+	virtual bool get_motion_plus_raw(uint16& pitch, uint16& yaw, uint16& roll) const { return false; }
 
 	enum class ConnectCallbackStatus
 	{
@@ -130,6 +139,8 @@ public:
 	};
 	ConnectCallbackStatus m_status = ConnectCallbackStatus::ReportConnect;
 	ConnectCallbackStatus m_extension_status = ConnectCallbackStatus::ReportConnect;
+	int m_last_reported_extension = -1;
+	bool m_format_from_game = false;
 
 	WPADDataFormat get_default_data_format() const;
 
@@ -140,6 +151,69 @@ private:
 	uint32be m_last_holdvalue = 0;
 
 	std::chrono::steady_clock::time_point m_last_hold_change{}, m_last_pulse{};
+	std::chrono::steady_clock::time_point m_last_mpls_log{};
+	float m_last_pointer_dist = 0;
+	float m_last_pointer_sep = 0;
+	float m_last_raw_x = 0;
+	float m_last_raw_y = 0;
+	// Unit offset from the bar toward the screen, in camera pixels. +Y is down in the image.
+	float m_last_off_x = 0;
+	float m_last_off_y = 1;
+	float m_last_pos_x = 0;
+	float m_last_pos_y = 0;
+	float m_last_horizon_x = 0;
+	float m_last_horizon_y = 0;
+	// The two lights are identical. Once gravity picks which end is which,
+	// follow each light so a roll does not flip the aim to the other side.
+	bool m_has_dot_track = false;
+	// Session-local gate for this player; the global option remains the master switch.
+	bool m_gamepad_bar_enabled = true;
+	bool m_gamepad_bar_combo_latched = false;
+	bool update_gamepad_bar_shortcut();
+	bool m_inverted_bar_latched = false;
+	bool m_last_bar_was_virtual = false;
+	// Physical ray is independent of cursor scaling and virtual GamePad dots.
+	bool m_mpls_real_ir_valid = false;
+	glm::vec3 m_mpls_camera_ray{0.0f, 0.0f, -1.0f};
+	float m_mpls_ir_stable_time = 0.0f;
+	// Option on, MotionPlus attached, camera toward the floor, and the camera
+	// does not already see two lights. Fills two synthetic sensor-bar dots.
+	bool fill_inverted_sensor_bar(uint16 xs[4], uint16 ys[4], bool lit[4]);
+	float m_track_ax = 0;
+	float m_track_ay = 0;
+	float m_track_bx = 0;
+	float m_track_by = 0;
+
+	void update_mpls(KPADStatus_t& status, const glm::vec3& acc, float acc_speed, const glm::vec3& gyro_rad,
+		const glm::quat& gyro_integral, double gyro_integral_time);
+
+	// KPAD MotionPlus state. Columns of m_mpls_dir are the remote's X, Y and Z
+	// axes in the frame the game set with KPADSetMplsDirection.
+	glm::mat3 m_mpls_dir{1.0f};
+	glm::mat3 m_mpls_base{1.0f};
+	glm::vec3 m_mpls_angle{};
+	glm::vec3 m_mpls_bias{};
+	bool m_mpls_dir_valid = false;
+	uint32 m_mpls_still_samples = 0;
+	// Largest angle, in degrees, between gravity and the integrated attitude since the last log line.
+	float m_mpls_tilt_error = 0;
+	std::chrono::steady_clock::time_point m_mpls_last_time{};
+	glm::quat m_mpls_last_integral{1.0f, 0.0f, 0.0f, 0.0f};
+	double m_mpls_last_integral_time = 0.0;
+
+public:
+	void set_mpls_direction(const glm::mat3& dir);
+	void set_mpls_dir_revise_base(const glm::mat3& base) { m_mpls_base = base; }
+	void reset_mpls();
+
+	// Stays false until the game calls KPADEnableMpls. Games that never do, such as
+	// Super Mario 3D World, then see a Nunchuk instead of a sideways remote.
+	bool m_mpls_enabled = false;
+	bool m_mpls_dir_revise = false;
+	float m_mpls_dir_revise_weight = 0.03f;
+	bool m_mpls_dpd_revise = false;
+	float m_mpls_dpd_revise_weight = 0.05f;
+	sint32 m_mpls_zero_drift_mode = 1;
 
 	
 };

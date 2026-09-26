@@ -9,6 +9,7 @@
 #include "AudioDebuggerWindow.h"
 #include "input/InputSettings2.h"
 #include "input/HotkeySettings.h"
+#include "input/WiimoteCalibrationFrame.h"
 #include "debugger/DebuggerWindow2.h"
 #include "EmulatedUSBDevices/EmulatedUSBDeviceFrame.h"
 #include "windows/PPCThreadsViewer/DebugPPCThreadsWindow.h"
@@ -91,6 +92,9 @@ enum
 	MAINFRAME_MENU_ID_OPTIONS_AUDIO,
 	MAINFRAME_MENU_ID_OPTIONS_INPUT,
 	MAINFRAME_MENU_ID_OPTIONS_HOTKEY,
+	MAINFRAME_MENU_ID_OPTIONS_WIIMOTE_CALIBRATE,
+	MAINFRAME_MENU_ID_OPTIONS_INVERTED_BAR,
+	MAINFRAME_MENU_ID_OPTIONS_GAMEPAD_ANDROID,
 	MAINFRAME_MENU_ID_OPTIONS_MAC_SETTINGS,
 	// options -> account
 	MAINFRAME_MENU_ID_OPTIONS_ACCOUNT_1 = 20350,
@@ -194,6 +198,9 @@ EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_GENERAL2, MainWindow::OnOptionsInput)
 EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_AUDIO, MainWindow::OnOptionsInput)
 EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_INPUT, MainWindow::OnOptionsInput)
 EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_HOTKEY, MainWindow::OnOptionsInput)
+EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_WIIMOTE_CALIBRATE, MainWindow::OnOptionsInput)
+EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_INVERTED_BAR, MainWindow::OnOptionsInput)
+EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_GAMEPAD_ANDROID, MainWindow::OnOptionsInput)
 EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_MAC_SETTINGS, MainWindow::OnOptionsInput)
 // tools menu
 EVT_MENU(MAINFRAME_MENU_ID_TOOLS_MEMORY_SEARCHER, MainWindow::OnToolsInput)
@@ -494,8 +501,22 @@ bool MainWindow::InstallUpdate(const fs::path& metaFilePath)
 	return false;
 }
 
-bool MainWindow::FileLoad(const fs::path launchPath, wxLaunchGameEvent::INITIATED_BY initiatedBy)
+bool MainWindow::FileLoad(const fs::path launchPath, wxLaunchGameEvent::INITIATED_BY initiatedBy, wxLaunchGameEvent::LAUNCH_MODE launchMode)
 {
+	ActiveSettings::SetCPUModeForLaunch(std::nullopt);
+	LaunchSettings::SetForceInterpreterForLaunch(std::nullopt);
+	if (launchMode == wxLaunchGameEvent::LAUNCH_MODE::FAST)
+	{
+		ActiveSettings::SetCPUModeForLaunch(CPUMode::MulticoreRecompiler);
+		LaunchSettings::SetForceInterpreterForLaunch(false);
+		cemuLog_log(LogType::Force, "Launch mode: Fast (multi-core recompiler)");
+	}
+	else if (launchMode == wxLaunchGameEvent::LAUNCH_MODE::COMPATIBILITY)
+	{
+		ActiveSettings::SetCPUModeForLaunch(CPUMode::SinglecoreInterpreter);
+		LaunchSettings::SetForceInterpreterForLaunch(true);
+		cemuLog_log(LogType::Force, "Launch mode: Compatibility (single-core interpreter)");
+	}
 	TitleInfo launchTitle{ launchPath };
 	if (launchTitle.IsValid())
 	{
@@ -578,47 +599,54 @@ bool MainWindow::FileLoad(const fs::path launchPath, wxLaunchGameEvent::INITIATE
 	else
 		GetWxGUIConfig().AddRecentlyLaunchedFile(_pathToUtf8(launchPath));
 
-	wxWindowUpdateLocker lock(this);
+	{
+		wxWindowUpdateLocker lock(this);
 
-    DestroyGameListAndStatusBar();
+		DestroyGameListAndStatusBar();
 
-	m_game_launched = true;
-	m_loadMenuItem->Enable(false);
-	m_installUpdateMenuItem->Enable(false);
-	m_memorySearcherMenuItem->Enable(true);
+		m_game_launched = true;
+		m_loadMenuItem->Enable(false);
+		m_installUpdateMenuItem->Enable(false);
+		m_memorySearcherMenuItem->Enable(true);
 
-	m_launched_game_name = CafeSystem::GetForegroundTitleName();
-	#ifdef ENABLE_DISCORD_RPC
-	if (m_discord)
-		m_discord->UpdatePresence(DiscordPresence::Playing, m_launched_game_name);
-	#endif
-
-	if (GetConfig().disable_screensaver)
-		ScreenSaver::SetInhibit(true);
-
-	if (FullscreenEnabled())
-		SetFullScreen(true);
-
-    //GameMode support
-#if BOOST_OS_LINUX && defined(ENABLE_FERAL_GAMEMODE)
-    if(GetWxGUIConfig().feral_gamemode)
-    {
-        // attempt to start gamemode
-        if(gamemode_request_start() < 0)
-        {
-            // GameMode failed to start
-            cemuLog_log(LogType::Force, "Could not start GameMode");
-        }
-        else
-        {
-            cemuLog_log(LogType::Force, "GameMode has been started.");
-        }
-    }
+		m_launched_game_name = CafeSystem::GetForegroundTitleName();
+#ifdef ENABLE_DISCORD_RPC
+		if (m_discord)
+			m_discord->UpdatePresence(DiscordPresence::Playing, m_launched_game_name);
 #endif
 
+		if (GetConfig().disable_screensaver)
+			ScreenSaver::SetInhibit(true);
+
+		if (FullscreenEnabled())
+			SetFullScreen(true);
+
+		//GameMode support
+#if BOOST_OS_LINUX && defined(ENABLE_FERAL_GAMEMODE)
+		if(GetWxGUIConfig().feral_gamemode)
+		{
+			// attempt to start gamemode
+			if(gamemode_request_start() < 0)
+			{
+				// GameMode failed to start
+				cemuLog_log(LogType::Force, "Could not start GameMode");
+			}
+			else
+			{
+				cemuLog_log(LogType::Force, "GameMode has been started.");
+			}
+		}
+#endif
+
+		RecreateMenu();
+	}
+	Show(true);
+	Layout();
+	Update();
 	CreateCanvas();
+	Layout();
+	Update();
 	CafeSystem::LaunchForegroundTitle();
-	RecreateMenu();
 	UpdateChildWindowTitleRunningState();
 
 	return true;
@@ -628,7 +656,11 @@ void MainWindow::OnLaunchFromFile(wxLaunchGameEvent& event)
 {
 	if (event.GetPath().empty())
 		return;
-	FileLoad(event.GetPath(), event.GetInitiatedBy());
+	if (!FileLoad(event.GetPath(), event.GetInitiatedBy(), event.GetLaunchMode()))
+	{
+		ActiveSettings::SetCPUModeForLaunch(std::nullopt);
+		LaunchSettings::SetForceInterpreterForLaunch(std::nullopt);
+	}
 }
 
 void MainWindow::OnFileMenu(wxCommandEvent& event)
@@ -806,7 +838,15 @@ void MainWindow::TogglePadView()
 
 		m_padView->Bind(wxEVT_CLOSE_WINDOW, &MainWindow::OnPadClose, this);
 
-		m_padView->Show(true);
+		// Android keeps the large second-monitor window. Off, it is a normal window
+		// on this screen and does not replace that saved placement.
+		if (GetConfig().gamepad_on_android.GetValue())
+		{
+			m_padView->PlaceOnSecondMonitor();
+			m_padView->Show(true);
+		}
+		else
+			m_padView->PlaceAsNormalWindow();
 
 #if ( BOOST_OS_LINUX || BOOST_OS_BSD ) && HAS_WAYLAND
 		if (wxWlIsWaylandWindow(m_padView))
@@ -885,6 +925,13 @@ void MainWindow::OpenSettings()
 		wxMessageBox(_("Cemu must be restarted to apply the selected UI language."), _("Information"), wxOK | wxCENTRE, this); // TODO: change language to newly selected one
 }
 
+void MainWindow::SyncInvertedSensorBarMenu()
+{
+	if (m_invertedBarItem)
+		m_invertedBarItem->Check(GetConfig().inverted_sensor_bar.GetValue());
+	GetConfigHandle().Save();
+}
+
 void MainWindow::OnOptionsInput(wxCommandEvent& event)
 {
 	switch (event.GetId())
@@ -893,6 +940,28 @@ void MainWindow::OnOptionsInput(wxCommandEvent& event)
 	{
 		const bool state = m_fullscreenMenuItem->IsChecked();
 		SetFullScreen(state);
+		break;
+	}
+	case MAINFRAME_MENU_ID_OPTIONS_INVERTED_BAR:
+	{
+		GetConfig().inverted_sensor_bar = m_invertedBarItem->IsChecked();
+		GetConfigHandle().Save();
+		break;
+	}
+	case MAINFRAME_MENU_ID_OPTIONS_GAMEPAD_ANDROID:
+	{
+		GetConfig().gamepad_on_android = m_gamepadAndroidItem->IsChecked();
+		GetConfigHandle().Save();
+		if (m_padView)
+		{
+			if (GetConfig().gamepad_on_android.GetValue())
+			{
+				m_padView->PlaceOnSecondMonitor();
+				m_padView->Show(true);
+			}
+			else
+				m_padView->PlaceAsNormalWindow();
+		}
 		break;
 	}
 	case MAINFRAME_MENU_ID_OPTIONS_SECOND_WINDOW_PADVIEW:
@@ -930,6 +999,12 @@ void MainWindow::OnOptionsInput(wxCommandEvent& event)
 		auto* frame = new InputSettings2(this);
 		frame->ShowModal();
 		frame->Destroy();
+		break;
+	}
+	case MAINFRAME_MENU_ID_OPTIONS_WIIMOTE_CALIBRATE:
+	{
+		auto* frame = new WiimoteCalibrationFrame(this);
+		frame->Show();
 		break;
 	}
 
@@ -1774,6 +1849,8 @@ void MainWindow::SetFullScreen(bool state)
 void MainWindow::EndEmulation() // unfinished - memory leaks and crashes after repeated use (after 3x usually)
 {
 	CafeSystem::ShutdownTitle();
+	ActiveSettings::SetCPUModeForLaunch(std::nullopt);
+	LaunchSettings::SetForceInterpreterForLaunch(std::nullopt);
 	DestroyCanvas();
 	m_game_launched = false;
 	m_launched_game_name.clear();
@@ -2257,12 +2334,17 @@ void MainWindow::RecreateMenu()
 	optionsMenu->Append(MAINFRAME_MENU_ID_OPTIONS_GRAPHIC_PACKS2, _("&Graphic packs"));
 	m_padViewMenuItem = optionsMenu->AppendCheckItem(MAINFRAME_MENU_ID_OPTIONS_SECOND_WINDOW_PADVIEW, _("&Separate GamePad view"));
 	m_padViewMenuItem->Check(wxConfig.pad_open);
+	m_gamepadAndroidItem = optionsMenu->AppendCheckItem(MAINFRAME_MENU_ID_OPTIONS_GAMEPAD_ANDROID, _("Gamepad on Android"));
+	m_gamepadAndroidItem->Check(GetConfig().gamepad_on_android.GetValue());
 	optionsMenu->AppendSeparator();
 	#if BOOST_OS_MACOS
 	optionsMenu->Append(MAINFRAME_MENU_ID_OPTIONS_MAC_SETTINGS, _("&Settings..." "\tCtrl-,"));
 	#endif
 	optionsMenu->Append(MAINFRAME_MENU_ID_OPTIONS_GENERAL2, _("&General settings"));
 	optionsMenu->Append(MAINFRAME_MENU_ID_OPTIONS_INPUT, _("&Input settings"));
+	optionsMenu->Append(MAINFRAME_MENU_ID_OPTIONS_WIIMOTE_CALIBRATE, _("Calibrate &Wii Remote"));
+	m_invertedBarItem = optionsMenu->AppendCheckItem(MAINFRAME_MENU_ID_OPTIONS_INVERTED_BAR, _("Virtual GamePad sensor bar (point Wii Remote down)"));
+	m_invertedBarItem->Check(GetConfig().inverted_sensor_bar.GetValue());
 	optionsMenu->Append(MAINFRAME_MENU_ID_OPTIONS_HOTKEY, _("&Hotkey settings"));
 
 	optionsMenu->AppendSeparator();
@@ -2466,9 +2548,9 @@ void MainWindow::RequestGameListRefresh()
 	wxQueueEvent(g_mainFrame, evt);
 }
 
-void MainWindow::RequestLaunchGame(fs::path filePath, wxLaunchGameEvent::INITIATED_BY initiatedBy)
+void MainWindow::RequestLaunchGame(fs::path filePath, wxLaunchGameEvent::INITIATED_BY initiatedBy, wxLaunchGameEvent::LAUNCH_MODE launchMode)
 {
-	wxLaunchGameEvent evt(filePath, initiatedBy);
+	wxLaunchGameEvent evt(filePath, initiatedBy, launchMode);
 	wxPostEvent(g_mainFrame, evt);
 }
 

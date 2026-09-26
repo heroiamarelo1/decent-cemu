@@ -55,6 +55,11 @@ public:
 	void start_rumble();
 	void stop_rumble();
 
+	void set_speaker(int command);
+	bool is_speaker_enabled() const;
+	bool can_send_speaker() const;
+	bool send_speaker_data(const uint8* data, uint32 size);
+
 	bool is_battery_low() const;
 
 	bool has_motion() const;
@@ -65,6 +70,10 @@ public:
 	MotionSample get_second_motion_data() const;
 
 	bool has_position() const;
+	bool has_touch_position() const;
+	glm::vec2 get_touch_position() const;
+	bool has_magnet() const;
+	glm::vec3 get_magnet() const;
 	glm::vec2 get_position() const;
 	glm::vec2 get_prev_position() const;
 	PositionVisibility GetPositionVisibility() const;

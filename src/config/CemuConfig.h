@@ -508,6 +508,17 @@ struct CemuConfig
 		ConfigValue<std::string> host{"127.0.0.1"};
 		ConfigValue<uint16> port{ 26760 };
 	}dsu_client{};
+	// Connected Wiimotes fill game slots from player 1, and the lit LED matches that player.
+	ConfigValue<bool> wiimote_auto_assign{ true };
+	// A MotionPlus remote with its camera pointing down is reported as seeing a sensor bar.
+	ConfigValue<bool> inverted_sensor_bar{ false };
+	// Separate GamePad view sends the pad image to the phone and keeps it off the TV.
+	// Off by default: the GamePad window stays on this screen.
+	ConfigValue<bool> gamepad_on_android{ false };
+	// GamePad view opens maximized on the second display (for a Moonlight touch screen).
+	ConfigValue<bool> pad_second_monitor{ false };
+	// TV audio on the primary monitor device; GamePad audio on the second monitor device.
+	ConfigValue<bool> pad_audio_second_monitor{ false };
 
 	// debug
 	ConfigValueBounds<CrashDump> crash_dump{ CrashDump::Disabled };

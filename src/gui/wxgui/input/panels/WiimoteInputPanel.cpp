@@ -10,6 +10,7 @@
 
 #include "wxgui/helpers/wxControlObject.h"
 #include "input/emulated/WiimoteController.h"
+#include "input/api/Wiimote/NativeWiimoteController.h"
 #include "wxgui/helpers/wxHelpers.h"
 #include "wxgui/components/wxInputDraw.h"
 
@@ -44,6 +45,11 @@ WiimoteInputPanel::WiimoteInputPanel(wxWindow* parent)
 
     extensions_sizer->Add(new wxStaticText(this, wxID_ANY, _("Extensions:")));
     extensions_sizer->AddSpacer(10);
+	m_auto_detect = new wxCheckBox(this, wxID_ANY, _("Detect automatically"));
+	m_auto_detect->SetValue(true);
+	m_auto_detect->Bind(wxEVT_CHECKBOX, &WiimoteInputPanel::on_auto_change, this);
+	extensions_sizer->Add(m_auto_detect);
+	extensions_sizer->AddSpacer(10);
 
 	m_motion_plus = new wxCheckBox(this, wxID_ANY, _("MotionPlus"));
 	m_motion_plus->Bind(wxEVT_CHECKBOX, &WiimoteInputPanel::on_extension_change, this);
@@ -229,14 +235,43 @@ void WiimoteInputPanel::on_extension_change(wxCommandEvent& event)
 		set_active_device_type(kWAPDevCore);
 }
 
+void WiimoteInputPanel::on_auto_change(wxCommandEvent& event)
+{
+	if (const auto wiimote = m_current_wiimote.lock())
+		wiimote->set_auto_detect_extensions(event.IsChecked());
+	m_motion_plus->Enable(!event.IsChecked());
+	m_nunchuck->Enable(!event.IsChecked());
+	m_classic->Enable(!event.IsChecked());
+}
+
 void WiimoteInputPanel::on_timer(const EmulatedControllerPtr& emulated_controller, const ControllerPtr& controller)
 {
 	if (emulated_controller)
 	{
 		const auto wiimote = std::dynamic_pointer_cast<WiimoteController>(emulated_controller);
 		wxASSERT(wiimote);
-
-		wiimote->set_device_type(m_device_type);
+		bool has_native = false;
+		bool native_connected = false;
+		for (const auto& input : wiimote->get_controllers())
+		{
+			if (const auto native = std::dynamic_pointer_cast<NativeWiimoteController>(input))
+			{
+				has_native = true;
+				native_connected |= native->slot_active();
+			}
+		}
+		m_auto_detect->Enable(has_native);
+		const bool auto_detect = has_native && wiimote->auto_detect_extensions();
+		m_motion_plus->Enable(!auto_detect);
+		m_nunchuck->Enable(!auto_detect);
+		m_classic->Enable(!auto_detect);
+		if (auto_detect && native_connected)
+		{
+			if (m_device_type != wiimote->get_device_type())
+				set_active_device_type(wiimote->get_device_type());
+		}
+		else if (!auto_detect && wiimote->get_device_type() != m_device_type)
+			wiimote->set_device_type(m_device_type);
 	}
 
 	InputPanel::on_timer(emulated_controller, controller);
@@ -255,6 +290,10 @@ void WiimoteInputPanel::load_controller(const EmulatedControllerPtr& emulated_co
 	if (emulated_controller) {
 		const auto wiimote = std::dynamic_pointer_cast<WiimoteController>(emulated_controller);
 		wxASSERT(wiimote);
+		m_current_wiimote = wiimote;
+		m_auto_detect->SetValue(wiimote->auto_detect_extensions());
 		set_active_device_type(wiimote->get_device_type());
 	}
+	else
+		m_current_wiimote.reset();
 }

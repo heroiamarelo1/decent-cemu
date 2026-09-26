@@ -1,6 +1,11 @@
 #include "input/InputManager.h"
 #include "config/ActiveSettings.h"
+#include "config/CemuConfig.h"
 #include "input/ControllerFactory.h"
+#if defined(SUPPORTS_WIIMOTE)
+#include "input/api/Wiimote/NativeWiimoteController.h"
+#endif
+#include <mutex>
 #include <boost/property_tree/ini_parser.hpp>
 #include <pugixml.hpp>
 #include "Cafe/GameProfile/GameProfile.h"
@@ -69,6 +74,7 @@ void InputManager::load() noexcept
 			cemuLog_log(LogType::Force, "can't load controller profile: {}", ex.what());
 		}
 	}
+	assign_wiimotes();
 }
 
 bool InputManager::load(size_t player_index, std::string_view filename)
@@ -708,7 +714,35 @@ std::shared_ptr<WPADController> InputManager::get_wpad_controller(size_t index) 
 		return {};
 
 	std::shared_lock lock(m_mutex);
-	return std::dynamic_pointer_cast<WPADController>(m_wpad[index]);
+	auto pad = std::dynamic_pointer_cast<WPADController>(m_wpad[index]);
+	if (!pad)
+		return {};
+
+#if defined(SUPPORTS_WIIMOTE)
+	// A saved profile is not a player. The game only hears about a Wiimote
+	// while its remote, or the phone pad, is actually connected.
+	if (pad->type() == EmulatedController::Wiimote)
+	{
+		const bool auto_assign = GetConfig().wiimote_auto_assign.GetValue();
+		bool present = false;
+		for (const auto& api : pad->get_controllers())
+		{
+			if (!api)
+				continue;
+			auto native = std::dynamic_pointer_cast<NativeWiimoteController>(api);
+			if (native)
+			{
+				if (auto_assign ? native->slot_active() : native->is_connected())
+					present = true;
+			}
+			else if (api->is_connected())
+				present = true;
+		}
+		if (!present)
+			return {};
+	}
+#endif
+	return pad;
 }
 
 std::pair<size_t, size_t> InputManager::get_controller_count() const
@@ -735,7 +769,132 @@ void InputManager::on_device_changed()
 	}
 	lock.unlock();
 
+	assign_wiimotes();
 	EventService::instance().signal<Events::ControllerChanged>();
+}
+
+void InputManager::assign_wiimotes()
+{
+#if defined(SUPPORTS_WIIMOTE)
+	if (!is_api_available(InputAPI::Wiimote))
+		return;
+
+	static std::mutex gate;
+	std::lock_guard gate_lock(gate);
+
+	auto provider = std::dynamic_pointer_cast<WiimoteControllerProvider>(get_api_provider(InputAPI::Wiimote));
+	if (!provider)
+		return;
+
+	provider->get_controllers();
+	const auto devices = provider->connected_indices();
+	const bool auto_assign = GetConfig().wiimote_auto_assign.GetValue();
+	if (auto_assign && devices.empty())
+	{
+		const size_t opened = provider->opened_slot_count();
+		if (opened > 0)
+			cemuLog_logOnce(LogType::Force,
+				"Wiimote HID slots open: {}. None has sent a report yet. Sync the remote to the Mayflash bar in mode 4.",
+				opened);
+	}
+	if (auto_assign)
+		create_missing_wiimote_profiles(devices);
+
+	std::unique_lock lock(m_mutex);
+	size_t next = 0;
+	for (size_t channel = 0; channel < m_wpad.size(); ++channel)
+	{
+		const auto& pad = m_wpad[channel];
+		if (!pad || pad->type() != EmulatedController::Wiimote)
+			continue;
+
+		bool claimed = false;
+		for (const auto& api : pad->get_controllers())
+		{
+			auto native = std::dynamic_pointer_cast<NativeWiimoteController>(api);
+			if (!native)
+				continue;
+
+			if (!auto_assign)
+			{
+				native->apply_slot(native->configured_index(), true, channel);
+				continue;
+			}
+
+			if (!claimed && next < devices.size())
+			{
+				native->apply_slot(devices[next], true, channel);
+				claimed = true;
+				++next;
+			}
+			else
+			{
+				native->apply_slot(native->configured_index(), false, channel);
+			}
+		}
+	}
+#else
+	(void)0;
+#endif
+}
+
+void InputManager::create_missing_wiimote_profiles(const std::vector<size_t>& devices)
+{
+#if defined(SUPPORTS_WIIMOTE)
+	if (devices.empty())
+		return;
+
+	size_t wiimote_players = 0;
+	size_t wpad_count = 0;
+	{
+		std::shared_lock lock(m_mutex);
+		for (const auto& pad : m_wpad)
+		{
+			if (!pad)
+				continue;
+			++wpad_count;
+			if (pad->type() == EmulatedController::Wiimote)
+				++wiimote_players;
+		}
+	}
+
+	size_t need = devices.size() > wiimote_players ? devices.size() - wiimote_players : 0;
+	if (wpad_count >= kMaxWPADControllers)
+		need = 0;
+	else if (wpad_count + need > kMaxWPADControllers)
+		need = kMaxWPADControllers - wpad_count;
+
+	for (size_t n = 0; n < need; ++n)
+	{
+		size_t player = kMaxController;
+		for (size_t i = 0; i < kMaxController; ++i)
+		{
+			if (!get_controller(i))
+			{
+				player = i;
+				break;
+			}
+		}
+		if (player == kMaxController)
+			return;
+
+		auto emulated = set_controller(player, EmulatedController::Type::Wiimote);
+		if (!emulated)
+			return;
+		auto native = ControllerFactory::CreateController(InputAPI::Wiimote, "0", "Wiimote");
+		emulated->add_controller(native);
+		if (!emulated->set_default_mapping(native))
+			cemuLog_log(LogType::Force, "Wiimote player {} default mapping was not applied", player + 1);
+		if (!save(player))
+		{
+			cemuLog_log(LogType::Force, "Wiimote player {} auto-config failed to write controller{}.xml", player + 1, player);
+			return;
+		}
+		cemuLog_log(LogType::Force, "Wiimote player {} configured automatically", player + 1);
+	}
+#else
+	(void)devices;
+#endif
 }
 
 ControllerProviderPtr InputManager::get_api_provider(InputAPI::Type api) const
@@ -949,6 +1108,14 @@ void InputManager::update_thread()
 				pad->update();
 		}
 		lock.unlock();
+
+		static auto last_wiimote_assign = std::chrono::steady_clock::now();
+		const auto assign_now = std::chrono::steady_clock::now();
+		if (assign_now - last_wiimote_assign >= std::chrono::milliseconds(500))
+		{
+			last_wiimote_assign = assign_now;
+			assign_wiimotes();
+		}
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		std::this_thread::yield();

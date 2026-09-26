@@ -15,6 +15,10 @@ public:
 	~PadViewFrame();
 
 	bool Initialize();
+	// Move the GamePad window onto the second display and maximize it.
+	void PlaceOnSecondMonitor();
+	// A normal GamePad window on the primary screen. Does not overwrite the Android placement.
+	void PlaceAsNormalWindow();
 	void InitializeRenderCanvas();
 	void DestroyCanvas();
 
@@ -35,4 +39,6 @@ private:
 	void OnSetWindowTitle(wxCommandEvent& event);
 
 	wxWindow* m_render_canvas = nullptr;
+	// While set, moving this window does not replace the saved Android placement.
+	bool m_preservePlacement = false;
 };

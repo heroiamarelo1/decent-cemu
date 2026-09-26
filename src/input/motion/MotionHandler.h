@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include <cmath>
 #include "Mahony.h"
 #include "MotionSample.h"
 
@@ -21,6 +23,8 @@ public:
 		m_acc[0] = accx;
 		m_acc[1] = accy;
 		m_acc[2] = accz;
+		if (!m_orientationInitialized && std::max({fabsf(gx), fabsf(gy), fabsf(gz)}) < 0.35f)
+			m_orientationInitialized = m_imu.initializeFromAcceleration(accx, accy, accz);
 		// integrate acc and gyro samples into IMU
 		m_imu.updateIMU(deltaTime, gx, gy, gz, accx, accy, accz);
 
@@ -30,12 +34,19 @@ public:
 		m_orientation[2] = _radToOrientation(m_imu.getRollRadians());
 	}
 
-	MotionSample getMotionSample()
+	// Call when the gyro source changes its own zero, so the fusion does not keep an old bias.
+	void resetGyroBias()
+	{
+		m_imu.resetGyroBias();
+	}
+
+	MotionSample getMotionSample(bool applyGyroBias = true)
 	{
 		float q[4];
 		m_imu.getQuaternion(q);
-		float gBias[3];
-		m_imu.getGyroBias(gBias);
+		float gBias[3]{};
+		if (applyGyroBias)
+			m_imu.getGyroBias(gBias);
 		float gyroDebiased[3];
 		gyroDebiased[0] = m_gyro[0] - gBias[0];
 		gyroDebiased[1] = m_gyro[1] - gBias[1];
@@ -57,4 +68,5 @@ private:
 	float m_prevAcc[3]{};
 	// calculated values
 	float m_orientation[3]{};
+	bool m_orientationInitialized = false;
 };

@@ -107,4 +107,10 @@ private:
 	void update_touch(VPADStatus_t& status);
 	void update_motion(VPADStatus_t& status);
 	glm::ivec2 m_last_touch_position{};
+	// Held while the pad is lying still, so gyro bias cannot walk the check.
+	bool m_motion_hold = false;
+	float m_hold_orient[3]{};
+	float m_hold_acc[3]{};
+	float m_hold_acc_mag = 1.0f;
+	float m_hold_dir[9]{};
 };

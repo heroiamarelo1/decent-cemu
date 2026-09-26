@@ -10,13 +10,115 @@ WiimoteController::WiimoteController(size_t player_index)
 
 void WiimoteController::set_device_type(WPADDeviceType device_type)
 {
+	if (m_device_type == device_type)
+		return;
 	m_device_type = device_type;
-	m_data_format = get_default_data_format();
+	if (!m_format_from_game)
+		m_data_format = get_default_data_format();
+}
+
+WPADDeviceType WiimoteController::reported_device_type() const
+{
+	// A game that never asks for MotionPlus still has to see a Nunchuk, or it
+	// keeps the sideways D-pad. Asking for MotionPlus switches the report to the
+	// real MotionPlus type. The gyro samples are filled either way.
+	if (!m_mpls_enabled)
+	{
+		if (m_device_type == kWAPDevMPLSFreeStyle)
+			return kWAPDevFreestyle;
+		if (m_device_type == kWAPDevMPLS)
+			return kWAPDevCore;
+		if (m_device_type == kWAPDevMPLSClassic)
+			return kWAPDevClassic;
+	}
+	return m_device_type;
+}
+
+void WiimoteController::update()
+{
+	base_type::update();
+	if (!m_auto_detect_extensions)
+		return;
+
+	// Nunchuk reports alternate with MotionPlus reports, so the extension bit is
+	// often clear for a frame. Require several agreeing samples before changing the
+	// type the game sees, in either direction. Also detect remotes without MotionPlus.
+	WPADDeviceType seen = m_device_type;
+	bool have_wiimote = false;
+	for (const auto& controller : get_controllers())
+	{
+		if (!controller || controller->api() != InputAPI::Wiimote)
+			continue;
+		auto* wiimote = static_cast<NativeWiimoteController*>(controller.get());
+		if (!wiimote->slot_active())
+			continue;
+		have_wiimote = true;
+		const bool motion_plus = wiimote->is_mpls_attached();
+		const auto extension = wiimote->get_extension();
+		if (extension == NativeWiimoteController::Nunchuck)
+			seen = motion_plus ? kWAPDevMPLSFreeStyle : kWAPDevFreestyle;
+		else if (extension == NativeWiimoteController::Classic)
+			seen = motion_plus ? kWAPDevMPLSClassic : kWAPDevClassic;
+		else
+			seen = motion_plus ? kWAPDevMPLS : kWAPDevCore;
+		break;
+	}
+
+	if (!have_wiimote)
+		return;
+
+	if (seen == m_extension_candidate)
+		++m_extension_candidate_samples;
+	else
+	{
+		m_extension_candidate = seen;
+		m_extension_candidate_samples = 1;
+	}
+
+	if (seen != m_device_type && m_extension_candidate_samples >= 8)
+	{
+		cemuLog_log(LogType::Force, "Wiimote player {} device type {} -> {} to match the connected extension",
+			player_index(), (int)m_device_type, (int)seen);
+		// Keep the format the game already chose. Only the device type has to
+		// change so a Nunchuk unplug is visible on the next read.
+		if (m_format_from_game)
+			m_device_type = seen;
+		else
+			set_device_type(seen);
+	}
+
+	// A profile can already say MotionPlus+Nunchuk while the read format is still
+	// the core remote, which has no stick. Put the Nunchuk stick in the sample
+	// until the game chooses a format itself.
+	if (!m_format_from_game && (m_device_type == kWAPDevMPLSFreeStyle || m_device_type == kWAPDevFreestyle))
+	{
+		if (m_data_format == kDataFormat_CORE || m_data_format == kDataFormat_CORE_ACC ||
+			m_data_format == kDataFormat_CORE_ACC_DPD || m_data_format == kDataFormat_CORE_ACC_DPD_FULL)
+			m_data_format = kDataFormat_FREESTYLE_ACC_DPD;
+	}
 }
 
 bool WiimoteController::is_mpls_attached()
 {
 	return m_device_type == kWAPDevMPLS || m_device_type == kWAPDevMPLSClassic || m_device_type == kWAPDevMPLSFreeStyle;
+}
+
+bool WiimoteController::get_motion_plus_raw(uint16& pitch, uint16& yaw, uint16& roll) const
+{
+	for (const auto& controller : get_controllers())
+	{
+		if (!controller || controller->api() != InputAPI::Wiimote)
+			continue;
+		const auto* wiimote = static_cast<const NativeWiimoteController*>(controller.get());
+		uint16 raw_yaw = 0, raw_roll = 0, raw_pitch = 0;
+		if (!wiimote->get_motion_plus_raw(raw_yaw, raw_roll, raw_pitch))
+			continue;
+		pitch = raw_pitch;
+		yaw = raw_yaw;
+		roll = raw_roll;
+		return true;
+	}
+	return false;
 }
 
 uint32 WiimoteController::get_emulated_button_flag(uint32 id) const
@@ -56,7 +158,23 @@ bool WiimoteController::set_default_mapping(const std::shared_ptr<ControllerBase
 			{kButtonId_Nunchuck_Left, kAxisXN},
 			{kButtonId_Nunchuck_Right, kAxisXP},
 		};
+		break;
 	}
+	case InputAPI::DSUClient:
+		mapping =
+		{
+			{kButtonId_A, 13},
+			{kButtonId_B, 12},
+			{kButtonId_1, 15},
+			{kButtonId_2, 14},
+			{kButtonId_Minus, 0},
+			{kButtonId_Plus, 3},
+			{kButtonId_Up, 4},
+			{kButtonId_Right, 5},
+			{kButtonId_Down, 6},
+			{kButtonId_Left, 7},
+		};
+		break;
 	}
 
 	bool mapping_updated = false;
@@ -102,6 +220,8 @@ void WiimoteController::load(const pugi::xml_node& node)
 
 	if (const auto value = node.child("device_type"))
 		m_device_type = ConvertString<WPADDeviceType>(value.child_value());
+	if (const auto value = node.child("auto_detect_extensions"))
+		m_auto_detect_extensions = ConvertString<bool>(value.child_value());
 }
 
 void WiimoteController::save(pugi::xml_node& node)
@@ -109,6 +229,7 @@ void WiimoteController::save(pugi::xml_node& node)
 	base_type::save(node);
 
 	node.append_child("device_type").append_child(pugi::node_pcdata).set_value(fmt::format("{}", (int)m_device_type).c_str());
+	node.append_child("auto_detect_extensions").append_child(pugi::node_pcdata).set_value(m_auto_detect_extensions ? "true" : "false");
 }
 
 uint32 WiimoteController::s_get_emulated_button_flag(uint32 id)
@@ -179,5 +300,3 @@ std::string_view WiimoteController::get_button_name(ButtonId id)
 		return "";
 	}
 }
-
-

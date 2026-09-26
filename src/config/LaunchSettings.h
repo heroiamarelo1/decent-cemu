@@ -34,7 +34,8 @@ public:
 	static bool OpenDebuggerEnabled() { return s_open_debugger; }
 	static bool NSightModeEnabled() { return s_nsight_mode; }
 
-	static bool ForceInterpreter() { return s_force_interpreter; };
+	static bool ForceInterpreter() { return s_force_interpreter_for_launch.value_or(s_force_interpreter); };
+	static void SetForceInterpreterForLaunch(std::optional<bool> enabled) { s_force_interpreter_for_launch = enabled; }
 	static bool ForceMultiCoreInterpreter() { return s_force_multicore_interpreter; }
 
 	static std::optional<uint32> GetPersistentId() { return s_persistent_id; }
@@ -61,6 +62,7 @@ private:
 	inline static bool s_nsight_mode = false;
 
 	inline static bool s_force_interpreter = false;
+	inline static std::optional<bool> s_force_interpreter_for_launch{};
 	inline static bool s_force_multicore_interpreter = false;
 	
 	inline static std::optional<uint32> s_persistent_id{};

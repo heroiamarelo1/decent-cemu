@@ -426,10 +426,13 @@ void cemu_initForGame()
 	cemuLog_log(LogType::Force, "------- Run title -------");
 	// wait till GPU thread is initialized
 	while (g_isGPUInitFinished == false) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	cemuLog_log(LogType::Force, "GPU init finished");
 	// run coreinit rpl_entry
 	RPLLoader_CallCoreinitEntrypoint();
+	cemuLog_log(LogType::Force, "coreinit entrypoint returned");
 	// init AX and start AX I/O thread
 	snd_core::AXOut_init();
+	cemuLog_log(LogType::Force, "AX output initialized");
 }
 
 namespace CafeSystem

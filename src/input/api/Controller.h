@@ -119,11 +119,32 @@ public:
 	virtual bool has_position() { return false; }
 	virtual glm::vec2 get_position() { return {}; }
 	virtual glm::vec2 get_prev_position() { return {}; }
+	// A finger on a pad, not a gyro aim. Wiimote DSU keeps using has_position().
+	virtual bool has_touch() { return false; }
+	virtual glm::vec2 get_touch_position() { return {}; }
+	virtual bool has_magnet() { return false; }
+	virtual glm::vec3 get_magnet() { return {}; }
 	virtual PositionVisibility GetPositionVisibility() {return PositionVisibility::NONE;};
+
+	struct IRPoint
+	{
+		uint16 x = 0x3FF;
+		uint16 y = 0x3FF;
+		bool visible = false;
+	};
+	// Up to four camera dots. Returns how many slots were written.
+	virtual int get_ir_points(IRPoint points[4]) { return 0; }
 
 	virtual bool has_rumble() { return false; }
 	virtual void start_rumble() {}
 	virtual void stop_rumble() {}
+
+	// The Wiimote speaker. command is a WPADSpeakerCmd (0 off, 1 on, 2 mute, 3 unmute, 4 play).
+	virtual bool has_speaker() { return false; }
+	virtual void set_speaker(int /*command*/) {}
+	virtual bool is_speaker_enabled() { return false; }
+	virtual bool can_send_speaker() { return false; }
+	virtual bool send_speaker_data(const uint8* /*data*/, uint32 /*size*/) { return false; }
 
 	virtual std::string get_button_name(uint64 button) const;
 

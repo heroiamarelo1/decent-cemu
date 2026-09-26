@@ -14,12 +14,19 @@
 #include <wx/combobox.h>
 #include <wx/button.h>
 #include <wx/statline.h>
+#include <wx/checkbox.h>
+#include <wx/statbox.h>
 #include <wx/bmpbuttn.h>
 #include <wx/settings.h>
 
 #include "config/ActiveSettings.h"
+#include "wxgui/MainWindow.h"
+#include "wxgui/wxCemuConfig.h"
+#include <wx/display.h>
+#include <wx/msgdlg.h>
 #include "wxgui/input/InputAPIAddWindow.h"
 #include "input/ControllerFactory.h"
+#include "audio/MonitorAudioRouting.h"
 
 #ifdef HAS_BLUEZ
 #include "wxgui/input/PairingDialog.h"
@@ -89,6 +96,78 @@ InputSettings2::InputSettings2(wxWindow* parent)
 
 	m_notebook->Bind(wxEVT_NOTEBOOK_PAGE_CHANGED, &InputSettings2::on_controller_page_changed, this);
 	sizer->Add(m_notebook, 1, wxEXPAND);
+
+	auto* options_box = new wxStaticBox(this, wxID_ANY, _("Options"));
+	auto* options = new wxStaticBoxSizer(options_box, wxVERTICAL);
+	auto* auto_wiimotes = new wxCheckBox(options_box, wxID_ANY, _("Assign connected Wiimotes in order (player light matches the screen)"));
+	auto_wiimotes->SetValue(GetConfig().wiimote_auto_assign.GetValue());
+	auto_wiimotes->Bind(wxEVT_CHECKBOX, [](wxCommandEvent& event)
+	{
+		GetConfig().wiimote_auto_assign = event.IsChecked();
+		GetConfigHandle().Save();
+		InputManager::instance().assign_wiimotes();
+	});
+	options->Add(auto_wiimotes, 0, wxALL, 6);
+
+	auto* pad_second = new wxCheckBox(options_box, wxID_ANY, _("GamePad on a second monitor, maximized"));
+	pad_second->SetValue(GetConfig().pad_second_monitor.GetValue());
+	pad_second->Bind(wxEVT_CHECKBOX, [](wxCommandEvent& event)
+	{
+		const bool enabled = event.IsChecked();
+		GetConfig().pad_second_monitor = enabled;
+		GetConfigHandle().Save();
+		if (!enabled || !g_mainFrame)
+			return;
+		if (wxDisplay::GetCount() < 2)
+		{
+			wxMessageBox(_("No second monitor was found. The GamePad window stays where it is."), _("Input settings"), wxOK | wxICON_INFORMATION);
+			return;
+		}
+		GetWxGUIConfig().pad_open = true;
+		g_wxConfig.Save();
+		g_mainFrame->TogglePadView();
+		if (auto* pad = g_mainFrame->GetPadView())
+			pad->PlaceOnSecondMonitor();
+	});
+	options->Add(pad_second, 0, wxLEFT | wxRIGHT | wxBOTTOM, 6);
+
+	auto* pad_audio_second = new wxCheckBox(options_box, wxID_ANY, _("GamePad audio on second monitor (TV on primary)"));
+	pad_audio_second->SetValue(GetConfig().pad_audio_second_monitor.GetValue());
+	pad_audio_second->SetToolTip(_("Routes GamePad sound to the second monitor's audio device when Windows exposes one. TV/main window sound stays on the primary monitor."));
+	pad_audio_second->Bind(wxEVT_CHECKBOX, [](wxCommandEvent& event)
+	{
+		const bool enabled = event.IsChecked();
+		GetConfig().pad_audio_second_monitor = enabled;
+		const auto result = MonitorAudioRouting::ApplyToConfig(enabled);
+		GetConfigHandle().Save();
+		MonitorAudioRouting::RecreateLiveDevices();
+
+		if (!enabled)
+			return;
+
+		if (result.noSecondMonitor)
+		{
+			wxMessageBox(_("No second monitor was found. GamePad audio was not changed."), _("Input settings"), wxOK | wxICON_INFORMATION);
+			return;
+		}
+		if (result.secondMonitorHasNoAudio || !result.applied)
+		{
+			const wxString detail = result.message.empty()
+				? _("The second monitor has no associated audio device. GamePad audio stays disabled.")
+				: wxString::FromUTF8(result.message);
+			wxMessageBox(detail, _("Input settings"), wxOK | wxICON_INFORMATION);
+			return;
+		}
+		if (!result.padDeviceName.empty())
+		{
+			wxMessageBox(
+				wxString::Format(_("GamePad audio is using \"%s\". TV audio stays on the primary monitor."),
+					wxString(result.padDeviceName)),
+				_("Input settings"), wxOK | wxICON_INFORMATION);
+		}
+	});
+	options->Add(pad_audio_second, 0, wxLEFT | wxRIGHT | wxBOTTOM, 6);
+	sizer->Add(options, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 6);
 
 	m_notebook->SetSelection(0);
 	auto* first_page = initialize_page(0);

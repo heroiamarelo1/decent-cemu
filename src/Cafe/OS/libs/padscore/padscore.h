@@ -74,6 +74,9 @@ union KPADEXStatus_t
 		beVec3D_t acc;
 		float32be accValue;
 		float32be accSpeed;
+		uint32be hold;
+		uint32be trig;
+		uint32be release;
 	}fs;
 	struct
 	{
@@ -108,17 +111,17 @@ static_assert(sizeof(KPADEXStatus_t) == 0x50);
 
 struct KPADMPDir_t
 {
-	padVec3D_t X;
-	padVec3D_t Y;
-	padVec3D_t Z;
+	beVec3D_t X;
+	beVec3D_t Y;
+	beVec3D_t Z;
 };
 
 static_assert(sizeof(KPADMPDir_t) == 0x24);
 
 struct KPADMPStatus_t
 {
-	padVec3D_t mpls;
-	padVec3D_t angle;
+	beVec3D_t mpls;
+	beVec3D_t angle;
 	KPADMPDir_t dir;
 };
 

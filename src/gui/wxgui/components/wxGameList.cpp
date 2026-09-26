@@ -609,7 +609,8 @@ enum ContextMenuEntries
 {
 	kContextMenuRefreshGames = wxID_HIGHEST + 1,
 
-	kContextMenuStart,
+	kContextMenuStartFast,
+	kContextMenuStartCompatibility,
 	kWikiPage,
 	kContextMenuFavorite,
 	kContextMenuEditName,
@@ -650,7 +651,8 @@ void wxGameList::OnContextMenu(wxContextMenuEvent& event)
 		{
 			menu.SetClientData((void*)title_id);
 
-			menu.Append(kContextMenuStart, _("&Start"));
+			menu.Append(kContextMenuStartFast, _("Start (Fast Mode)"));
+			menu.Append(kContextMenuStartCompatibility, _("Start (Compatibility Mode)"));
 
 			bool isFavorite = GetConfig().IsGameListFavorite(title_id);
 			std::error_code ec;
@@ -701,9 +703,14 @@ void wxGameList::OnContextMenuSelected(wxCommandEvent& event)
 		{
 			switch (event.GetId())
 			{
-			case kContextMenuStart:
+			case kContextMenuStartFast:
 			{
-				MainWindow::RequestLaunchGame(gameInfo.GetBase().GetPath(), wxLaunchGameEvent::INITIATED_BY::GAME_LIST);
+				MainWindow::RequestLaunchGame(gameInfo.GetBase().GetPath(), wxLaunchGameEvent::INITIATED_BY::GAME_LIST, wxLaunchGameEvent::LAUNCH_MODE::FAST);
+				break;
+			}
+			case kContextMenuStartCompatibility:
+			{
+				MainWindow::RequestLaunchGame(gameInfo.GetBase().GetPath(), wxLaunchGameEvent::INITIATED_BY::GAME_LIST, wxLaunchGameEvent::LAUNCH_MODE::COMPATIBILITY);
 				break;
 			}
 			case kContextMenuFavorite:

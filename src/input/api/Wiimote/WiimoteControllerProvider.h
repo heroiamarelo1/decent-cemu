@@ -32,8 +32,16 @@ public:
 	std::vector<std::shared_ptr<ControllerBase>> get_controllers() override;
 
 	bool is_connected(size_t index);
+	// Slots that answered with a report. An empty Mayflash/DolphinBar entry stays open and is not included.
+	std::vector<size_t> connected_indices();
+	size_t opened_slot_count();
 	bool is_registered_device(size_t index);
 	void set_rumble(size_t index, bool state);
+	void set_speaker(size_t index, int command);
+	bool is_speaker_enabled(size_t index);
+	bool can_send_speaker(size_t index);
+	bool send_speaker_data(size_t index, const uint8* data, uint32 size);
+	static void set_speaker_volume(uint8 volume);
 	void request_status(size_t index);
 	void set_led(size_t index, size_t player_index);
 
@@ -49,7 +57,9 @@ public:
 		glm::vec3 m_acceleration{}, m_prev_acceleration{};
 		float m_roll = 0;
 
-		std::chrono::high_resolution_clock::time_point m_last_motion_timestamp{};
+		std::chrono::steady_clock::time_point m_last_motion_timestamp{};
+		glm::quat m_gyro_integral{1.0f, 0.0f, 0.0f, 0.0f};
+		double m_gyro_integral_time = 0.0;
 		MotionSample motion_sample{};
 		WiiUMotionHandler motion_handler{};
 
@@ -68,8 +78,20 @@ public:
 			std::pair<sint32, sint32> indices{ 0,1 };
 		}ir_camera{};
 
+		// Last report mode we'd asked the Wiimote for. Avoids flooding 0x12 on
+		// every memory read / status while the desired mode is unchanged.
+		InputReportId m_requested_report = kNone;
+
 		std::optional<MotionPlusData> m_motion_plus;
 		std::variant<std::monostate, NunchuckData, ClassicData> m_extension{};
+		// MotionPlus and Nunchuk reports alternate, so one MotionPlus-only frame is
+		// normal. This counts frames with no pass-through so an unplug is noticed.
+		uint8 m_motion_plus_only_reports = 0;
+		// A400FA has been answered. MotionPlus stays inactive until then so the
+		// Nunchuk calibration read still reaches the extension.
+		bool m_extension_id_received = false;
+		// A MotionPlus attachment can reject the first A600FA read right after connecting.
+		uint8 m_motion_plus_probe_retries = 0;
 	};
 	WiimoteState get_state(size_t index);
 	
@@ -90,10 +112,21 @@ private:
 			: device(std::move(device)) {}
 
 		WiimoteDevicePtr device;
+		// A failed I/O operation marks the current handle disconnected. The
+		// handle itself is replaced only while holding m_device_mutex exclusively.
+		std::atomic_bool disconnected = false;
+		// Set after the first real report. Empty DolphinBar slots never set this.
+		std::atomic_bool heard_report = false;
 		std::atomic_bool rumble = false;
+		std::atomic_bool speaker = false;
 
 		std::shared_mutex mutex;
 		WiimoteState state{};
+		std::chrono::steady_clock::time_point last_startup_probe{};
+		// The hardware only echoes the low 16 address bits in read replies.
+		// Keep the full addresses in send order to distinguish A40020/A60020.
+		std::mutex pending_reads_mutex;
+		std::list<uint32> pending_reads;
 
 		std::atomic_uint32_t data_delay = kDefaultPacketDelay;
 		std::chrono::high_resolution_clock::time_point data_ts{};
@@ -109,7 +142,9 @@ private:
 	void connectionThread();
 
 	void calibrate(size_t index);
-	IRMode set_ir_camera(size_t index, bool state);
+	// force=true rewrites the IR registers even when the software mode is unchanged
+	// (needed after MotionPlus activation, which can leave the camera dark).
+	IRMode set_ir_camera(size_t index, bool state, bool force = false);
 
 	void send_packet(size_t index, std::vector<uint8> data);
 	void send_read_packet(size_t index, MemoryType type, RegisterAddress address, uint16 size);
@@ -124,6 +159,8 @@ private:
 	void request_extension(size_t index);
 	void detect_motion_plus(size_t index);
 	void set_motion_plus(size_t index, bool state);
+	void request_nunchuk_calibration(size_t index, NunchuckData& nunchuck);
+	void try_activate_motion_plus(size_t index, WiimoteState& state);
 
 	void update_report_type(size_t index);
 };

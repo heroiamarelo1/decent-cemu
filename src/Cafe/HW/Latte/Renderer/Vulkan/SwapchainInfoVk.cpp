@@ -45,7 +45,7 @@ void SwapchainInfoVk::Create()
 
 	VkResult result = vkCreateSwapchainKHR(m_logicalDevice, &create_info, nullptr, &m_swapchain);
 	if (result != VK_SUCCESS)
-		UnrecoverableError("Error attempting to create a swapchain");
+		UnrecoverableError(fmt::format("Error attempting to create a swapchain: {}", (int)result).c_str());
 
 	result = vkGetSwapchainImagesKHR(m_logicalDevice, m_swapchain, &image_count, nullptr);
 	if (result != VK_SUCCESS)

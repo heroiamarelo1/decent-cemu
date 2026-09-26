@@ -40,11 +40,21 @@ public:
 
 	WiimoteController(size_t player_index);
 
+	void update() override;
+
 	Type type() const override { return Type::Wiimote; }
 	WPADDeviceType get_device_type() const override { return m_device_type; }
+	WPADDeviceType reported_device_type() const override;
 	void set_device_type(WPADDeviceType device_type);
+	bool auto_detect_extensions() const { return m_auto_detect_extensions; }
+	void set_auto_detect_extensions(bool enabled) { m_auto_detect_extensions = enabled; }
 
 	bool is_mpls_attached() override;
+
+	// The extension report the game sees changes only after several agreeing samples.
+	WPADDeviceType m_extension_candidate = kWAPDevCore;
+	uint32 m_extension_candidate_samples = 0;
+	bool get_motion_plus_raw(uint16& pitch, uint16& yaw, uint16& roll) const override;
 
 	uint32 get_emulated_button_flag(uint32 id) const override;
 	size_t get_highest_mapping_id() const override { return kButtonId_Max; }
@@ -74,4 +84,5 @@ public:
 
 private:
 	WPADDeviceType m_device_type = kWAPDevCore;
+	bool m_auto_detect_extensions = true;
 };

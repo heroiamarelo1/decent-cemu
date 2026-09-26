@@ -1,5 +1,10 @@
 #include "input/api/DSU/DSUControllerProvider.h"
+
+#include <atomic>
+#include <cstring>
 #include "input/api/DSU/DSUController.h"
+#include "config/CemuConfig.h"
+#include "gui/wxgui/MainWindow.h"
 
 #if BOOST_OS_WINDOWS
 #include <boost/asio/detail/socket_option.hpp>
@@ -8,6 +13,27 @@
 #include <sys/time.h>
 #include <sys/socket.h>
 #endif
+
+static std::atomic<uint8> g_androidPadEdge{0};
+
+void AndroidPadEdgeSet(uint8 edge)
+{
+	g_androidPadEdge.store(edge);
+}
+
+const char* AndroidPadEdgeName()
+{
+	switch (g_androidPadEdge.load())
+	{
+	case 1: return "right";
+	case 2: return "left";
+	case 3: return "top";
+	case 4: return "bottom";
+	case 5: return "screen";
+	case 6: return "back";
+	default: return "unknown";
+	}
+}
 
 DSUControllerProvider::DSUControllerProvider()
 	: base_type(), m_uid(rand()), m_socket(m_io_service)
@@ -72,6 +98,8 @@ std::vector<std::shared_ptr<ControllerBase>> DSUControllerProvider::get_controll
 		indices[i] = get_packet_index(i);
 
 	request_pad_info();
+	// WiiMoteDSU only starts sending the pad after a request with no slot flags.
+	request_pad_data();
 
 	const auto controller_result = wait_update(indices, 3000);
 	for (auto i = 0; i < kMaxClients; ++i)
@@ -122,7 +150,11 @@ bool DSUControllerProvider::is_connected(uint8_t index) const
 		return false;
 
 	std::scoped_lock lock(m_mutex[index]);
-	return m_state[index].info.state == DsState::Connected;
+	if (m_state[index].info.state != DsState::Connected)
+		return false;
+	// A stopped phone keeps the last "connected" packet. Treat silence as gone.
+	const auto age = std::chrono::steady_clock::now() - m_state[index].last_update;
+	return age < std::chrono::seconds(1);
 }
 
 DSUControllerProvider::ControllerState DSUControllerProvider::get_state(uint8_t index) const
@@ -163,8 +195,7 @@ std::array<bool, DSUControllerProvider::kMaxClients> DSUControllerProvider::wait
 		if (std::all_of(result.cbegin(), result.cend(), [](const bool& v) { return v == true; }))
 			break;
 
-		//std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		std::this_thread::yield();
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	while (std::chrono::steady_clock::now() < end);
 
@@ -250,7 +281,7 @@ void DSUControllerProvider::reader_thread()
 		ServerMessage* msg;
 		//try
 		//{
-		std::array<char, 100> recv_buf; // NOLINT(cppcoreguidelines-pro-type-member-init, hicpp-member-init)
+		std::array<char, 128> recv_buf; // NOLINT(cppcoreguidelines-pro-type-member-init, hicpp-member-init)
 		boost::asio::ip::udp::endpoint sender_endpoint;
 		boost::system::error_code ec{};
 		const size_t len = m_socket.receive_from(boost::asio::buffer(recv_buf), sender_endpoint, 0, ec);
@@ -367,6 +398,44 @@ void DSUControllerProvider::reader_thread()
 				std::scoped_lock lock(mutex);
 				m_prev_state[index] = m_state[index];
 				m_state[index] = *rsp;
+				m_state[index].has_magnet = false;
+				m_state[index].mic_down = false;
+				m_state[index].screen_down = false;
+				if (len >= sizeof(DataResponse) + sizeof(float) * 3)
+				{
+					float magnet[3];
+					memcpy(magnet, recv_buf.data() + sizeof(DataResponse), sizeof(magnet));
+					m_state[index].has_magnet = true;
+					m_state[index].magnet[0] = magnet[0];
+					m_state[index].magnet[1] = magnet[1];
+					m_state[index].magnet[2] = magnet[2];
+				}
+				if (len >= sizeof(DataResponse) + sizeof(float) * 3 + 2)
+				{
+					const uint8* extra = reinterpret_cast<const uint8*>(recv_buf.data() + sizeof(DataResponse) + sizeof(float) * 3);
+					m_state[index].mic_down = extra[0] != 0;
+					m_state[index].screen_down = extra[1] != 0;
+					// 0 leaves the option alone. 1 turns it off, 2 turns it on.
+					if (len >= sizeof(DataResponse) + sizeof(float) * 3 + 3 && (extra[2] == 1 || extra[2] == 2))
+					{
+						const bool on = extra[2] == 2;
+						if (GetConfig().inverted_sensor_bar.GetValue() != on)
+						{
+							GetConfig().inverted_sensor_bar = on;
+							if (g_mainFrame)
+							{
+								g_mainFrame->CallAfter([]() {
+									if (g_mainFrame)
+										g_mainFrame->SyncInvertedSensorBarMenu();
+								});
+							}
+							else
+								GetConfigHandle().Save();
+						}
+					}
+					if (len >= sizeof(DataResponse) + sizeof(float) * 3 + 4)
+						AndroidPadEdgeSet(extra[3]);
+				}
 				m_wait_cond[index].notify_all();
 				// update motion info immediately, guaranteeing that we dont drop packets
 				integrate_motion(index, *rsp);
@@ -374,6 +443,7 @@ void DSUControllerProvider::reader_thread()
 			}
 		}
 
+		request_pad_data();
 		if (index != 0xFF)
 			request_pad_data(index);
 	}
@@ -431,6 +501,14 @@ void DSUControllerProvider::integrate_motion(uint8_t index, const DataResponse& 
 	                                            -acc.z);
 
 	m_state[index].motion_sample = m_motion_handler[index].getMotionSample();
+	// Our Android GamePad app advertises this fixed, locally administered ID.
+	// Its screen-right acceleration needs the opposite VPAD lateral sign.
+	// Adapt the API output only: reflecting the fusion input would also reverse
+	// the already calibrated gyro/camera controls. Other DSU devices retain
+	// their existing convention.
+	constexpr MACAddress_t androidGamePadId{0x02, 0x67, 0x60, 0x00, 0x00, 0x01};
+	m_state[index].motion_sample.setVPADAccelerometerXInverted(
+		data_response.GetMacAddress() == androidGamePadId);
 }
 
 DSUControllerProvider::ControllerState& DSUControllerProvider::ControllerState::operator=(const PortInfo& port_info)

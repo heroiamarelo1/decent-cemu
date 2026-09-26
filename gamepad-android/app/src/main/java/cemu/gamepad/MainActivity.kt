@@ -106,7 +106,7 @@ class MainActivity : Activity(), SensorEventListener {
         stillSamples = 0
         gravitySum = FloatArray(3)
         gyroSum = FloatArray(3)
-        status.text = "Pousa o telemóvel na mesa, ecrã para cima, na posição de jogo, e não mexas."
+        status.text = "Lay the phone flat on a table, screen up, in your play position, and keep still."
     }
 
     private fun displayRotation(): Int {
@@ -220,7 +220,7 @@ class MainActivity : Activity(), SensorEventListener {
             stillSamples = 0
             gravitySum = FloatArray(3)
             gyroSum = FloatArray(3)
-            runOnUiThread { status.text = "Não mexas. Pousa o telemóvel na mesa, ecrã para cima." }
+            runOnUiThread { status.text = "Keep still. Lay the phone flat on a table, screen up." }
             return
         }
         if (stillSamples == 0)
@@ -239,7 +239,7 @@ class MainActivity : Activity(), SensorEventListener {
         axes.save(prefs)
         prefs.edit().putInt("rotation", playRotation).apply()
         calibrating = false
-        runOnUiThread { status.text = "Calibrado. O ecrã fica nesta posição." }
+        runOnUiThread { status.text = "Calibrated. The screen stays in this orientation." }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
@@ -322,12 +322,12 @@ class MainActivity : Activity(), SensorEventListener {
         audioSocket?.close()
         audioConnected = false
         streamRunning = true
-        status.text = "A ligar a $ip…"
+        status.text = "Connecting to $ip…"
         startAudio(ip)
         thread(name = "pad-video") {
             try {
                 Socket(ip, 26761).use { socket ->
-                    runOnUiThread { status.text = "Ligado a $ip" }
+                    runOnUiThread { status.text = "Connected to $ip" }
                     val input = socket.getInputStream()
                     val header = ByteArray(4)
                     var shown = false
@@ -341,14 +341,14 @@ class MainActivity : Activity(), SensorEventListener {
                         runOnUiThread {
                             image.bitmap = bitmap
                             if (!shown) {
-                                status.text = if (audioConnected) "Imagem e som ligados" else "Imagem ligada"
+                                status.text = if (audioConnected) "Video and audio connected" else "Video connected"
                                 shown = true
                             }
                         }
                     }
                 }
             } catch (ex: Exception) {
-                runOnUiThread { status.text = ex.message ?: "Falhou a ligar" }
+                runOnUiThread { status.text = ex.message ?: "Connection failed" }
             }
             streamRunning = false
         }
@@ -367,8 +367,8 @@ class MainActivity : Activity(), SensorEventListener {
                 audioSocket = socket
                 audioConnected = true
                 runOnUiThread {
-                    if (status.text == "Imagem ligada" || status.text == "Ligado a $ip")
-                        status.text = "Imagem e som ligados"
+                    if (status.text == "Video connected" || status.text == "Connected to $ip")
+                        status.text = "Video and audio connected"
                 }
                 val rate = 48000
                 val channel = AudioFormat.CHANNEL_OUT_STEREO

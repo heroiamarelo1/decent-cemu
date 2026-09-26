@@ -1,5 +1,8 @@
 #include "MainWindow.h"
 
+#include <algorithm>
+#include <vector>
+
 // subwindows
 #include "TitleManager.h"
 #include "GeneralSettings2.h"
@@ -22,6 +25,11 @@
 #include "wxHelper.h"
 #include "helpers/wxHelpers.h"
 #include "PadViewFrame.h"
+
+#if BOOST_OS_WINDOWS
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#endif
 
 #if BOOST_OS_LINUX || BOOST_OS_MACOS || BOOST_OS_BSD
 #include "resource/embedded/resources.h"
@@ -404,12 +412,67 @@ MainWindow::~MainWindow()
 	g_mainFrame = nullptr;
 }
 
+static wxString PhoneLanLabel()
+{
+#if BOOST_OS_WINDOWS
+	ULONG size = 15 * 1024;
+	std::vector<unsigned char> buffer(size);
+	auto* addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+	const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+	ULONG result = GetAdaptersAddresses(AF_INET, flags, nullptr, addresses, &size);
+	if (result == ERROR_BUFFER_OVERFLOW)
+	{
+		buffer.resize(size);
+		addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+		result = GetAdaptersAddresses(AF_INET, flags, nullptr, addresses, &size);
+	}
+	if (result != NO_ERROR)
+		return wxString("App: no network");
+
+	wxString other;
+	for (auto* adapter = addresses; adapter; adapter = adapter->Next)
+	{
+		if (adapter->OperStatus != IfOperStatusUp)
+			continue;
+		if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+			continue;
+		for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next)
+		{
+			if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET)
+				continue;
+			const auto* ipv4 = reinterpret_cast<const sockaddr_in*>(unicast->Address.lpSockaddr);
+			const auto* bytes = reinterpret_cast<const unsigned char*>(&ipv4->sin_addr);
+			if (bytes[0] == 127 || (bytes[0] == 169 && bytes[1] == 254))
+				continue;
+			const wxString label = wxString::Format("App: %u.%u.%u.%u:26760", bytes[0], bytes[1], bytes[2], bytes[3]);
+			const bool privateLan = bytes[0] == 10 || (bytes[0] == 192 && bytes[1] == 168) || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31);
+			if (privateLan)
+				return label;
+			if (other.empty())
+				other = label;
+		}
+	}
+	return other.empty() ? wxString("App: no network") : other;
+#else
+	return wxString();
+#endif
+}
+
 void MainWindow::CreateGameListAndStatusBar()
 {
     if(m_main_panel)
         return; // already displayed
     m_main_panel = new wxPanel(this);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
+	auto* corner = new wxBoxSizer(wxHORIZONTAL);
+	corner->AddStretchSpacer(1);
+	auto* address = new wxStaticText(m_main_panel, wxID_ANY, PhoneLanLabel());
+	wxFont font = address->GetFont();
+	font.SetPointSize(std::max(8, font.GetPointSize() - 1));
+	address->SetFont(font);
+	address->SetForegroundColour(wxColour(176, 176, 176));
+	corner->Add(address, 0, wxRIGHT | wxTOP | wxALIGN_CENTER_VERTICAL, 8);
+	sizer->Add(corner, 0, wxEXPAND);
     // game list
     m_game_list = new wxGameList(m_main_panel, MAINFRAME_GAMELIST_ID);
     m_game_list->Bind(wxEVT_OPEN_SETTINGS, [this](auto&) {OpenSettings(); });

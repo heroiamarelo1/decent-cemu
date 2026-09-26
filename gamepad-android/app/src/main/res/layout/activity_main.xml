@@ -18,7 +18,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:hint="IP do PC"
+            android:hint="PC IP"
             android:inputType="text"
             android:textColor="#FFFFFF"
             android:textColorHint="#88FFFFFF" />
@@ -27,7 +27,7 @@
             android:id="@+id/connect"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Imagem" />
+            android:text="Video" />
 
         <Button
             android:id="@+id/home"
@@ -63,7 +63,7 @@
             android:id="@+id/calibrate"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Calibrar" />
+            android:text="Calibrate" />
     </LinearLayout>
 
     <cemu.gamepad.PadImageView
@@ -77,7 +77,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="end"
-        android:text="Voltar"
+        android:text="Back"
         android:visibility="gone" />
 
     <TextView

@@ -2,7 +2,7 @@
 
 #define EMULATOR_NAME					"Decent Cemu"
 
-#define EMULATOR_VERSION_SUFFIX			".0.1"
+#define EMULATOR_VERSION_SUFFIX			".0.2"
 
 #define _XSTRINGFY(s) _STRINGFY(s)
 #define _STRINGFY(s) #s

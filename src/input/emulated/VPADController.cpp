@@ -339,6 +339,8 @@ void VPADController::update_motion(VPADStatus_t& status)
 		status.acc.x = acc.x;
 		status.acc.y = acc.y;
 		status.acc.z = acc.z;
+		const auto vertical = vpad_motion::verticality(acc);
+		status.accXY = {vertical.x, vertical.y};
 		status.accMagnitude = motionSample.getVPADAccMagnitude();
 		status.accAcceleration = motionSample.getVPADAccAcceleration();
 
@@ -377,7 +379,7 @@ void VPADController::update_motion(VPADStatus_t& status)
 		const float holdRate = std::sqrt(gyroChange.x * gyroChange.x + gyroChange.y * gyroChange.y + gyroChange.z * gyroChange.z);
 		// About 3 deg/s. Wide enough for a phone lying on the table, and narrow
 		// enough that a real tilt is not frozen and then released as a jump.
-		const bool resting = holdRate < 0.008f &&
+		const bool resting = !motionSample.hasCoherentMotion() && holdRate < 0.008f &&
 			status.accMagnitude > 0.85f && status.accMagnitude < 1.15f;
 		if (resting)
 		{

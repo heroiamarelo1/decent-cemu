@@ -1,6 +1,7 @@
 #pragma once
 #include "util/math/vector3.h"
 #include "util/math/quaternion.h"
+#include "input/motion/VPADMotionFrame.h"
 
 struct Quat
 {
@@ -129,36 +130,44 @@ public:
 
 	void getVPADOrientation(float orientation[3])
 	{
-		orientation[0] = m_orientation[0];
-		orientation[1] = m_orientation[1];
-		orientation[2] = m_orientation[2];
+		orientation[0] = m_coherentMotion ? m_vpadTurns.x : m_orientation[0];
+		orientation[1] = m_coherentMotion ? m_vpadTurns.y : m_orientation[1];
+		orientation[2] = m_coherentMotion ? m_vpadTurns.z : m_orientation[2];
+        if (m_androidVPADFrame)
+        {
+            orientation[1] = -orientation[1];
+            orientation[2] = -orientation[2];
+        }
 	}
 
 	void getVPADGyroChange(float gyro[3])
 	{
 		// filter noise
 		float filtered[3]{m_gyro[0], m_gyro[1], m_gyro[2]};
-		if (fabs(filtered[0]) < 0.012f)
+		if (!m_coherentMotion && fabs(filtered[0]) < 0.012f)
 			filtered[0] = 0.0f;
-		if (fabs(filtered[1]) < 0.012f)
+		if (!m_coherentMotion && fabs(filtered[1]) < 0.012f)
 			filtered[1] = 0.0f;
-		if (fabs(filtered[2]) < 0.012f)
+		if (!m_coherentMotion && fabs(filtered[2]) < 0.012f)
 			filtered[2] = 0.0f;
 		// convert
 		gyro[0] = _radToOrientation(-filtered[0]);
-		// Flipping this Y rate for the Android app did not change Donkey Kong's car.
-		// Leave the generic sign. The held tilt is tested on the roll angle below.
-		gyro[1] = _radToOrientation(-filtered[1]);
-		gyro[2] = _radToOrientation(filtered[2]);
+        gyro[1] = _radToOrientation(-filtered[1]);
+        gyro[2] = _radToOrientation(filtered[2]);
+        if (m_androidVPADFrame)
+        {
+            gyro[1] = -gyro[1];
+            gyro[2] = -gyro[2];
+        }
 	}
 
-	// Android device adapter for lateral acceleration and screen-normal gyro rate.
-	// Raw fusion coordinates and the attitude matrix stay unchanged.
+	// Legacy APK acceleration workaround; DCM2 uses the full frame adapter.
+	void setAndroidVPADFrame(bool enabled) { m_androidVPADFrame = enabled; }
 	void setVPADAccelerometerXInverted(bool inverted) { m_invertVPADAccX = inverted; }
 
 	void getVPADAccelerometer(float acc[3])
 	{
-		acc[0] = m_invertVPADAccX ? m_acc[0] : -m_acc[0];
+		acc[0] = (m_invertVPADAccX || m_androidVPADFrame) ? m_acc[0] : -m_acc[0];
 		acc[1] = -m_acc[1];
 		acc[2] = m_acc[2];
 	}
@@ -202,15 +211,21 @@ public:
 	}
 
 	void getVPADAttitudeMatrix(float mtx[9])
-	{
-		// VPADs attitude matrix has mixed axis handedness, the most sane way to replicate it is by generating Y and Z by rotating the X vector
-		Quaternionf qImu(m_q[0], m_q[1], m_q[2], m_q[3]);
-		Quaternionf qY = qImu * Quaternionf::FromAngleAxis(1.5708f * 1.0f, 0.0f, 0.0f, 1.0f);
-		Quaternionf qZ = qImu * Quaternionf::FromAngleAxis(1.5708f * 1.0f, 0.0f, 1.0f, 0.0f);
- 		getXVector(mtx + 0, qImu);
-		getXVector(mtx + 3, qY);
-		getXVector(mtx + 6, qZ);
-	}
+    {
+        const glm::quat attitude(m_q[0], m_q[1], m_q[2], m_q[3]);
+        const auto matrix = m_androidVPADFrame ? vpad_motion::androidDirection(attitude) : vpad_motion::direction(attitude);
+        for (int c = 0; c < 3; ++c)
+            for (int r = 0; r < 3; ++r) mtx[c * 3 + r] = matrix[c][r];
+    }
+    glm::quat getQuaternion() const { return {m_q[0], m_q[1], m_q[2], m_q[3]}; }
+    bool hasCoherentMotion() const { return m_coherentMotion; }
+    void setCoherentMotion(const glm::vec3& turns, double time)
+    {
+        m_coherentMotion = true;
+        m_sampleTime = time;
+        m_vpadTurns = turns;
+    }
+    double getSampleTime() const { return m_sampleTime; }
 
 	static float calculateAccAcceleration(float prevAcc[3], float currentAcc[3])
 	{
@@ -260,12 +275,16 @@ private:
 	float m_acc[3]{};
 	float m_accAcceleration{};
 	bool m_invertVPADAccX = false;
+	bool m_androidVPADFrame = false;
 	float m_orientation[3]{};
 	float m_q[4]{};
 	glm::quat m_gyroIntegral{1.0f, 0.0f, 0.0f, 0.0f};
 	double m_gyroIntegralTime = 0.0;
 	// calculated values
 	float m_accMagnitude{};
+	bool m_coherentMotion = false;
+	glm::vec3 m_vpadTurns{};
+	double m_sampleTime = 0;
 };
 
 /*

@@ -5,7 +5,7 @@ option(MACOS_BUNDLE "The executable when built on macOS will be created as an ap
 option(ALLOW_PORTABLE "Allow Cemu to be run in portable mode" ON)
 
 # used by CI script to set version:
-# Visible name is Decent Cemu 2.6.0.1. The fourth version field is set in cemu.rc.
+# Visible name is Decent Cemu 2.6.0.2. The fourth version field is set in cemu.rc.
 set(EMULATOR_VERSION_MAJOR "2" CACHE STRING "")
 set(EMULATOR_VERSION_MINOR "6" CACHE STRING "")
 set(EMULATOR_VERSION_PATCH "0" CACHE STRING "")

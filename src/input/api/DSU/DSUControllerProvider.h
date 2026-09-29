@@ -56,6 +56,8 @@ public:
 		DataResponseData data{};
 		MotionSample motion_sample{};
 		bool has_magnet = false;
+		bool coherent_motion = false;
+		uint32_t sensor_sequence = 0;
 		float magnet[3]{};
 		bool mic_down = false;
 		bool screen_down = false;

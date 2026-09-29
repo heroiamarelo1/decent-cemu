@@ -46,7 +46,8 @@ public:
 		return true;
 	}
 
-	// gx, gy, gz are in radians/sec
+    void setContinuousMotion(bool enabled) { m_continuousMotion = enabled; }
+    // gx, gy, gz are in radians/sec
 	void updateIMU(float deltaTime, float gx, float gy, float gz, float ax, float ay, float az)
 	{
 		Vector3f av(ax, ay, az);
@@ -57,21 +58,24 @@ public:
 		const bool gravityOk = accelMag > 0.85f && accelMag < 1.15f;
 		// A slow tilt still changes which way is up. Only a pose that holds
 		// still is allowed to move the bias, or gameplay walks the heading.
-		updateGyroBias(gx, gy, gz, gravityOk && accelDirectionStable(ax, ay, az, deltaTime));
+        if (m_continuousMotion)
+            updateContinuousBias(gx, gy, gz, ax, ay, az, gravityOk, deltaTime);
+        else
+            updateGyroBias(gx, gy, gz, gravityOk && accelDirectionStable(ax, ay, az, deltaTime));
 		gv.x -= m_gyroBias[0];
 		gv.y -= m_gyroBias[1];
 		gv.z -= m_gyroBias[2];
 
 		const float gyroMag = sqrtf(gv.x * gv.x + gv.y * gv.y + gv.z * gv.z);
-		if (gyroMag < 0.05f && gravityOk)
+		if (!m_continuousMotion && gyroMag < 0.05f && gravityOk)
 			return;
 
-		// ignore small angles to avoid drift due to bias (especially on yaw)
-		if (fabs(gv.x) < 0.015f)
+		// Legacy native Wiimote behavior is retained; coherent DSU keeps slow motion.
+		if (!m_continuousMotion && fabs(gv.x) < 0.015f)
 			gv.x = 0.0f;
-		if (fabs(gv.y) < 0.015f)
+		if (!m_continuousMotion && fabs(gv.y) < 0.015f)
 			gv.y = 0.0f;
-		if (fabs(gv.z) < 0.015f)
+		if (!m_continuousMotion && fabs(gv.z) < 0.015f)
 			gv.z = 0.0f;
 
 		// cemuLog_logDebug(LogType::Force, "[IMU Quat] time {:7.4} | {:7.2} {:7.2} {:7.2} {:7.2} | gyro( - bias) {:7.4} {:7.4} {:7.4} | acc {:7.2} {:7.2} {:7.2} | GyroBias {:7.4} {:7.4} {:7.4}", deltaTime, m_imuQ.x, m_imuQ.y, m_imuQ.z, m_imuQ.w, gv.x, gv.y, gv.z, ax, ay, az, m_gyroBias[0], m_gyroBias[1], m_gyroBias[2]);
@@ -208,6 +212,25 @@ private:
 		return m_lastStable;
 	}
 
+    void updateContinuousBias(float gx, float gy, float gz, float ax, float ay, float az, bool gravityOk, float dt)
+    {
+        // Bias can only learn very small residual rates. Slow deliberate turns
+        // must not become a new zero, even if gravity stays constant during yaw.
+        const float residual = std::max({fabsf(gx-m_gyroBias[0]), fabsf(gy-m_gyroBias[1]), fabsf(gz-m_gyroBias[2])});
+        const float dx=ax-m_restAcc[0], dy=ay-m_restAcc[1], dz=az-m_restAcc[2];
+        if (!gravityOk || residual > 0.005f || dx*dx+dy*dy+dz*dz > 0.000025f || dt <= 0)
+        {
+            m_restTime=0; m_restAcc[0]=ax; m_restAcc[1]=ay; m_restAcc[2]=az;
+            return;
+        }
+        m_restTime += dt;
+        if (m_restTime < 1.0f) return;
+        const float weight=1.0f-std::exp(-dt/10.0f);
+        m_gyroBias[0] += weight*(gx-m_gyroBias[0]);
+        m_gyroBias[1] += weight*(gy-m_gyroBias[1]);
+        m_gyroBias[2] += weight*(gz-m_gyroBias[2]);
+    }
+
 	void updateGyroBias(float gx, float gy, float gz, bool still)
 	{
 		// A Switch Pro can sit at about 0.09 rad/s. Real tilting is larger, and
@@ -236,6 +259,8 @@ private:
 	}
 
 	private:
+		bool m_continuousMotion = false;
+		float m_restAcc[3]{}, m_restTime = 0;
 		Quaternionf m_imuQ; // current orientation
 		// angle data
 		float m_roll{};

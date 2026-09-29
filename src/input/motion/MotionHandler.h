@@ -8,7 +8,9 @@
 class WiiUMotionHandler
 {
 public:
-	// gyro is in radians/sec
+    void setCoherentMotion(bool enabled) { m_coherentMotion=enabled; m_imu.setContinuousMotion(enabled); }
+    void setSampleTime(double time) { m_sampleTime=time; }
+    // gyro is in radians/sec
 	void processMotionSample(
 		float deltaTime,
 		float gx, float gy, float gz,
@@ -28,7 +30,12 @@ public:
 		// integrate acc and gyro samples into IMU
 		m_imu.updateIMU(deltaTime, gx, gy, gz, accx, accy, accz);
 
-		// get orientation from IMU
+        if (m_coherentMotion && deltaTime > 0 && deltaTime <= 0.2f)
+        {
+            float bias[3]{}; m_imu.getGyroBias(bias);
+            m_vpadTurns += glm::vec3(-(gx-bias[0]), -(gy-bias[1]), gz-bias[2]) * (deltaTime / (2.0f*3.14159265359f));
+        }
+        // get orientation from IMU
 		m_orientation[0] = _radToOrientation(-m_imu.getYawRadians()) - 0.50f;
 		m_orientation[1] = _radToOrientation(-m_imu.getPitchRadians()) - 0.50f;
 		m_orientation[2] = _radToOrientation(m_imu.getRollRadians());
@@ -51,7 +58,9 @@ public:
 		gyroDebiased[0] = m_gyro[0] - gBias[0];
 		gyroDebiased[1] = m_gyro[1] - gBias[1];
 		gyroDebiased[2] = m_gyro[2] - gBias[2];
-		return MotionSample(m_acc, MotionSample::calculateAccAcceleration(m_prevAcc, m_acc), gyroDebiased, m_orientation, q);
+        MotionSample result(m_acc, MotionSample::calculateAccAcceleration(m_prevAcc, m_acc), gyroDebiased, m_orientation, q);
+        if (m_coherentMotion) result.setCoherentMotion(m_vpadTurns, m_sampleTime);
+        return result;
 	}
 private:
 
@@ -69,4 +78,7 @@ private:
 	// calculated values
 	float m_orientation[3]{};
 	bool m_orientationInitialized = false;
+	bool m_coherentMotion = false;
+	glm::vec3 m_vpadTurns{};
+	double m_sampleTime = 0;
 };

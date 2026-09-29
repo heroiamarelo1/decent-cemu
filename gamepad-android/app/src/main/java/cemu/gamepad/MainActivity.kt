@@ -48,6 +48,9 @@ class MainActivity : Activity(), SensorEventListener {
     private var gravitySum = FloatArray(3)
     private var gyroSum = FloatArray(3)
     private var latestGyro = FloatArray(3)
+    private var latestGyroTime = 0L
+    private var latestMag = FloatArray(3)
+    private var motionSequence = 0
     @Volatile private var streamRunning = false
     @Volatile private var audioConnected = false
     @Volatile private var audioGeneration = 0
@@ -93,7 +96,7 @@ class MainActivity : Activity(), SensorEventListener {
         image.onShowControls = { setIrMode(PadImageView.IrMode.OFF, controls, back) }
         findViewById<Button>(R.id.calibrate).setOnClickListener { beginCalibration() }
         sensors = getSystemService(SENSOR_SERVICE) as SensorManager
-        val prefs = getSharedPreferences("pad_axes_v3", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("pad_axes_v4", Context.MODE_PRIVATE)
         axes.load(prefs)
         if (axes.ready)
             lockPlayOrientation(if (prefs.contains("rotation")) prefs.getInt("rotation", Surface.ROTATION_90) else displayRotation())
@@ -166,7 +169,7 @@ class MainActivity : Activity(), SensorEventListener {
 
     override fun onResume() {
         super.onResume()
-        val delay = SensorManager.SENSOR_DELAY_GAME
+        val delay = 10000 // requested 100 Hz; integrate the actual SensorEvent timestamps
         sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sensors.registerListener(this, it, delay) }
         sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sensors.registerListener(this, it, delay) }
         sensors.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.let { sensors.registerListener(this, it, delay) }
@@ -185,28 +188,27 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
+        if (event.values.take(3).any { !it.isFinite() }) return
         when (event.sensor.type) {
-            Sensor.TYPE_ACCELEROMETER -> {
-                if (calibrating) collectCalibration(event.values)
-                val g = axes.accel(event.values[0], event.values[1], event.values[2])
-                sample.accelX = g[0] / 9.80665f
-                sample.accelY = g[1] / 9.80665f
-                sample.accelZ = g[2] / 9.80665f
-                sample.edgeDown = axes.edgeDown(event.values[0], event.values[1], event.values[2])
-            }
             Sensor.TYPE_GYROSCOPE -> {
-                latestGyro = floatArrayOf(event.values[0], event.values[1], event.values[2])
-                val deg = 180f / Math.PI.toFloat()
-                val g = axes.gyro(event.values[0], event.values[1], event.values[2])
-                sample.gyroX = g[0] * deg
-                sample.gyroY = g[1] * deg
-                sample.gyroZ = g[2] * deg
+                latestGyro = event.values.copyOf(3)
+                latestGyroTime = event.timestamp
             }
-            Sensor.TYPE_MAGNETIC_FIELD -> {
-                val g = axes.magnet(event.values[0], event.values[1], event.values[2])
-                sample.magX = g[0]
-                sample.magY = g[1]
-                sample.magZ = g[2]
+            Sensor.TYPE_MAGNETIC_FIELD -> latestMag = event.values.copyOf(3)
+            Sensor.TYPE_ACCELEROMETER -> {
+                // Do not invent motion observations when a sensor has stopped.
+                val age = event.timestamp - latestGyroTime
+                if (latestGyroTime == 0L || age < -20_000_000L || age > 30_000_000L) return
+                if (calibrating) collectCalibration(event.values)
+                if (!axes.ready || calibrating) return
+                val a = axes.accel(event.values[0], event.values[1], event.values[2])
+                val g = axes.gyro(latestGyro[0], latestGyro[1], latestGyro[2])
+                val m = axes.magnet(latestMag[0], latestMag[1], latestMag[2])
+                val deg = 180f / Math.PI.toFloat()
+                sample.motion = MotionSnapshot(event.timestamp / 1000L, ++motionSequence,
+                    a[0]/9.80665f, a[1]/9.80665f, a[2]/9.80665f,
+                    g[0]*deg, g[1]*deg, g[2]*deg, m[0], m[1], m[2],
+                    axes.edgeDown(event.values[0], event.values[1], event.values[2]))
             }
         }
     }
@@ -214,7 +216,7 @@ class MainActivity : Activity(), SensorEventListener {
     private fun collectCalibration(accel: FloatArray) {
         val accelMag = sqrt(accel[0] * accel[0] + accel[1] * accel[1] + accel[2] * accel[2])
         val gyroMag = sqrt(latestGyro[0] * latestGyro[0] + latestGyro[1] * latestGyro[1] + latestGyro[2] * latestGyro[2])
-        if (accelMag < 7.5f || accelMag > 11.5f || gyroMag > 0.25f) {
+        if (accelMag < 9.3f || accelMag > 10.3f || gyroMag > 0.05f || accel[2] / accelMag < 0.966f) {
             if (stillSamples > 0)
                 requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             stillSamples = 0
@@ -230,12 +232,12 @@ class MainActivity : Activity(), SensorEventListener {
             gyroSum[i] += latestGyro[i]
         }
         stillSamples += 1
-        if (stillSamples < 40) return
+        if (stillSamples < 100) return
         val gravity = FloatArray(3) { gravitySum[it] / stillSamples }
         val bias = FloatArray(3) { gyroSum[it] / stillSamples }
         val (screenRight, screenUp) = PadAxes.screenRightAndUp(playRotation)
         axes.capture(gravity, bias, screenRight, screenUp)
-        val prefs = getSharedPreferences("pad_axes_v3", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("pad_axes_v4", Context.MODE_PRIVATE)
         axes.save(prefs)
         prefs.edit().putInt("rotation", playRotation).apply()
         calibrating = false

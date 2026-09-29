@@ -32,24 +32,11 @@ class PadAxes {
     }
 
     fun capture(gravity: FloatArray, gyroBias: FloatArray, screenRight: FloatArray, screenUp: FloatArray) {
-        val flat = normalize(gravity)
-        var x = normalize(floatArrayOf(
-            screenRight[0] - flat[0] * dot(screenRight, flat),
-            screenRight[1] - flat[1] * dot(screenRight, flat),
-            screenRight[2] - flat[2] * dot(screenRight, flat)
-        ))
-        val top = normalize(floatArrayOf(
-            screenUp[0] - flat[0] * dot(screenUp, flat),
-            screenUp[1] - flat[1] * dot(screenUp, flat),
-            screenUp[2] - flat[2] * dot(screenUp, flat)
-        ))
-        if (dot(cross(x, top), flat) < 0f)
-            x = floatArrayOf(-x[0], -x[1], -x[2])
-        // A GamePad lying flat, screen up, is the neutral pose. Putting gravity on
-        // another axis made Nintendo Land look up at the sky while the phone sat still.
-        right = x
-        up = top
-        out = flat
+        // Calibration measures bias, never bends the physical sensor basis.
+        // Screen axes form one orthonormal, right-handed frame in every pose.
+        right = normalize(screenRight)
+        out = normalize(cross(right, screenUp))
+        up = normalize(cross(out, right))
         bias = gyroBias.copyOf()
         ready = true
     }

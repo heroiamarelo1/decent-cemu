@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstring>
+#include "input/motion/MotionTrace.h"
 #include "input/api/DSU/DSUController.h"
 #include "config/CemuConfig.h"
 #include "gui/wxgui/MainWindow.h"
@@ -398,7 +399,11 @@ void DSUControllerProvider::reader_thread()
 				std::scoped_lock lock(mutex);
 				m_prev_state[index] = m_state[index];
 				m_state[index] = *rsp;
-				m_state[index].has_magnet = false;
+                m_state[index].coherent_motion = len >= sizeof(DataResponse)+24 &&
+                    std::memcmp(recv_buf.data()+sizeof(DataResponse)+16, "DCM2", 4)==0;
+                if (m_state[index].coherent_motion)
+                    std::memcpy(&m_state[index].sensor_sequence, recv_buf.data()+sizeof(DataResponse)+20, 4);
+                m_state[index].has_magnet = false;
 				m_state[index].mic_down = false;
 				m_state[index].screen_down = false;
 				if (len >= sizeof(DataResponse) + sizeof(float) * 3)
@@ -477,18 +482,27 @@ void DSUControllerProvider::writer_thread()
 
 void DSUControllerProvider::integrate_motion(uint8_t index, const DataResponse& data_response)
 {
-	const uint64 ts = data_response.GetMotionTimestamp();
-	if (ts <= m_last_motion_timestamp[index])
-	{
-		const uint64 dif = m_last_motion_timestamp[index] - ts;
-		if (dif >= 10000000) // timestamp more than 10 seconds in the past, a controller reset probably happened
-			m_last_motion_timestamp[index] = 0;
-		return;
-	}
-
-	const uint64 elapsedTime = ts - m_last_motion_timestamp[index];
-	m_last_motion_timestamp[index] = ts;
-	const double elapsedTimeD = (double)elapsedTime / 1000000.0;
+    const auto& inputAcc = data_response.GetAcceleration();
+    const auto& inputGyro = data_response.GetGyro();
+    for (const float value : {inputAcc.x, inputAcc.y, inputAcc.z, inputGyro.x, inputGyro.y, inputGyro.z})
+        if (!std::isfinite(value)) return;
+    const uint64 ts = data_response.GetMotionTimestamp();
+    if (!ts) return; // app has not acquired a coherent sensor pair yet
+    const auto previous = m_last_motion_timestamp[index];
+    if (ts <= previous)
+    {
+        if (previous-ts >= 10000000)
+        {
+            m_last_motion_timestamp[index]=0;
+            m_motion_handler[index]=WiiUMotionHandler{};
+        }
+        return;
+    }
+    m_last_motion_timestamp[index] = ts;
+    const bool coherent = m_state[index].coherent_motion;
+    const double elapsedTimeD = previous && ts-previous <= 200000 ? double(ts-previous)/1000000.0 : 0.0;
+    m_motion_handler[index].setCoherentMotion(coherent);
+    m_motion_handler[index].setSampleTime(double(ts)/1000000.0);
 	const auto& acc = data_response.GetAcceleration();
 	const auto& gyro = data_response.GetGyro();
 
@@ -507,8 +521,22 @@ void DSUControllerProvider::integrate_motion(uint8_t index, const DataResponse& 
 	// the already calibrated gyro/camera controls. Other DSU devices retain
 	// their existing convention.
 	constexpr MACAddress_t androidGamePadId{0x02, 0x67, 0x60, 0x00, 0x00, 0x01};
+    // Only the identified DCM2 Android app opts into the complete VPAD frame.
+    // Generic DSU, SDL and real Wiimote adapters retain their existing outputs.
+    m_state[index].motion_sample.setAndroidVPADFrame(
+        data_response.GetMacAddress() == androidGamePadId && coherent);
 	m_state[index].motion_sample.setVPADAccelerometerXInverted(
-		data_response.GetMacAddress() == androidGamePadId);
+		data_response.GetMacAddress() == androidGamePadId && !coherent);
+    const auto q=m_state[index].motion_sample.getQuaternion();
+    motion_trace::values("sensor", index, 0, 0, {
+        double(ts), double(m_state[index].sensor_sequence), double(coherent), elapsedTimeD,
+        acc.x, acc.y, acc.z, gyro.x, gyro.y, gyro.z, q.w, q.x, q.y, q.z,
+        double(m_state[index].has_magnet), m_state[index].magnet[0], m_state[index].magnet[1], m_state[index].magnet[2]});
+
+    motion_trace::write("sensor", "%u,%llu,%u,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g",
+        unsigned(index), static_cast<unsigned long long>(ts), m_state[index].sensor_sequence, int(coherent), elapsedTimeD,
+        double(acc.x),double(acc.y),double(acc.z),double(gyro.x),double(gyro.y),double(gyro.z),
+        double(q.w),double(q.x),double(q.y),double(q.z));
 }
 
 DSUControllerProvider::ControllerState& DSUControllerProvider::ControllerState::operator=(const PortInfo& port_info)

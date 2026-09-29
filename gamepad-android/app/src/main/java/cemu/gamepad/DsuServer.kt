@@ -7,7 +7,16 @@ import java.nio.ByteOrder
 import java.util.zip.CRC32
 import kotlin.concurrent.thread
 
+data class MotionSnapshot(
+    val timestampUs: Long = 0, val sequence: Int = 0,
+    val accelX: Float = 0f, val accelY: Float = 0f, val accelZ: Float = 0f,
+    val gyroX: Float = 0f, val gyroY: Float = 0f, val gyroZ: Float = 0f,
+    val magX: Float = 0f, val magY: Float = 0f, val magZ: Float = 0f,
+    val edgeDown: Int = 0
+)
+
 class PadSample {
+    @Volatile var motion = MotionSnapshot()
     @Volatile var buttons: Int = 0
     @Volatile var lx: Int = 128
     @Volatile var ly: Int = 128
@@ -19,19 +28,9 @@ class PadSample {
     @Volatile var ps: Boolean = false
     @Volatile var mic: Boolean = false
     @Volatile var screen: Boolean = false
-    @Volatile var accelX: Float = 0f
-    @Volatile var accelY: Float = 0f
-    @Volatile var accelZ: Float = 0f
-    @Volatile var gyroX: Float = 0f
-    @Volatile var gyroY: Float = 0f
-    @Volatile var gyroZ: Float = 0f
-    @Volatile var magX: Float = 0f
-    @Volatile var magY: Float = 0f
-    @Volatile var magZ: Float = 0f
     // 0 leaves the emulator option alone. 1 turns it off, 2 turns it on.
     @Volatile var sensorBarCmd: Int = 0
     // Which screen edge gravity pulls toward: 0 unknown, 1 right, 2 left, 3 top, 4 bottom, 5 screen, 6 back.
-    @Volatile var edgeDown: Int = 0
 }
 
 object PadBits {
@@ -123,6 +122,7 @@ class DsuServer(private val sample: PadSample) {
     }
 
     private fun dataPacket(uid: Int): ByteArray {
+        val motion = sample.motion // one immutable sensor observation per datagram
         val body = 100
         val packet = ByteArray(body)
         val buf = ByteBuffer.wrap(packet).order(ByteOrder.LITTLE_ENDIAN)
@@ -170,24 +170,26 @@ class DsuServer(private val sample: PadSample) {
         buf.put(0)
         buf.putShort(0)
         buf.putShort(0)
-        buf.putLong(System.nanoTime() / 1000L)
-        buf.putFloat(sample.accelX)
-        buf.putFloat(sample.accelY)
-        buf.putFloat(sample.accelZ)
-        buf.putFloat(sample.gyroX)
-        buf.putFloat(sample.gyroY)
-        buf.putFloat(sample.gyroZ)
+        buf.putLong(motion.timestampUs)
+        buf.putFloat(motion.accelX)
+        buf.putFloat(motion.accelY)
+        buf.putFloat(motion.accelZ)
+        buf.putFloat(motion.gyroX)
+        buf.putFloat(motion.gyroY)
+        buf.putFloat(motion.gyroZ)
         stampCrc(packet, body)
-        val out = ByteArray(body + 16)
+        val out = ByteArray(body + 24)
         packet.copyInto(out)
-        val extra = ByteBuffer.wrap(out, body, 16).order(ByteOrder.LITTLE_ENDIAN)
-        extra.putFloat(sample.magX)
-        extra.putFloat(sample.magY)
-        extra.putFloat(sample.magZ)
+        val extra = ByteBuffer.wrap(out, body, 24).order(ByteOrder.LITTLE_ENDIAN)
+        extra.putFloat(motion.magX)
+        extra.putFloat(motion.magY)
+        extra.putFloat(motion.magZ)
         extra.put(if (sample.mic) 1 else 0)
         extra.put(if (sample.screen) 1 else 0)
         extra.put(sample.sensorBarCmd.toByte())
-        extra.put(sample.edgeDown.toByte())
+        extra.put(motion.edgeDown.toByte())
+        extra.put(byteArrayOf(68, 67, 77, 50)) // DCM2: coherent sensor contract
+        extra.putInt(motion.sequence)
         return out
     }
 

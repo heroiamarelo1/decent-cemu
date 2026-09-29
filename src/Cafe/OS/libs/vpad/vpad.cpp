@@ -7,6 +7,11 @@
 #include "Cafe/OS/libs/coreinit/coreinit_Alarm.h"
 #include "input/InputManager.h"
 #include "WindowSystem.h"
+#include "input/motion/VPADMotionFrame.h"
+#include "input/motion/MotionTrace.h"
+
+static std::mutex s_motionReferenceMutex;
+static vpad_motion::Reference s_motionReference[VPAD_MAX_CONTROLLERS];
 
 #ifdef PUBLIC_RELASE
 #define vpadbreak() 
@@ -286,6 +291,35 @@ namespace vpad
 				}
 			}
 			controller->VPADRead(*status, vpad::g_vpad.controller_data[channel].btn_repeat);
+            {
+                std::lock_guard lock(s_motionReferenceMutex);
+                const glm::mat3 raw{
+                    {float(status->dir.x.x), float(status->dir.x.y), float(status->dir.x.z)},
+                    {float(status->dir.y.x), float(status->dir.y.y), float(status->dir.y.z)},
+                    {float(status->dir.z.x), float(status->dir.z.y), float(status->dir.z.z)}};
+                auto d = s_motionReference[channel].apply(raw);
+                const auto cpu = PPCInterpreter_getCurrentInstance();
+                motion_trace::values("frame", channel, cpu ? cpu->instructionPointer : 0, cpu ? cpu->spr.LR : 0, {
+                    double(controller->get_motion_data().getSampleTime()), double(length),
+                    double(g_vpadGyroDirRevise[channel].enabled), g_vpadGyroDirRevise[channel].weight,
+                    double(g_vpadGyroZeroDriftMode[channel]),
+                    raw[0].x,raw[0].y,raw[0].z,raw[1].x,raw[1].y,raw[1].z,raw[2].x,raw[2].y,raw[2].z,
+                    d[0].x,d[0].y,d[0].z,d[1].x,d[1].y,d[1].z,d[2].x,d[2].y,d[2].z,
+                    float(status->acc.x),float(status->acc.y),float(status->acc.z),
+                    float(status->gyroChange.x),float(status->gyroChange.y),float(status->gyroChange.z),
+                    float(status->gyroOrientation.x),float(status->gyroOrientation.y),float(status->gyroOrientation.z),
+                    float(status->accXY.x),float(status->accXY.y),
+                    float(status->magnet.x),float(status->magnet.y),float(status->magnet.z)});
+
+                status->dir.x = {d[0].x, d[0].y, d[0].z};
+                status->dir.y = {d[1].x, d[1].y, d[1].z};
+                status->dir.z = {d[2].x, d[2].y, d[2].z};
+                const auto a = s_motionReference[channel].applyAngles({float(status->gyroOrientation.x), float(status->gyroOrientation.y), float(status->gyroOrientation.z)});
+                status->gyroOrientation = {a.x, a.y, a.z};
+                motion_trace::write("vpad", "%u,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+                    unsigned(channel), double(d[0].x), double(d[0].y), double(d[0].z),
+                    double(d[1].x), double(d[1].y), double(d[1].z), double(d[2].x), double(d[2].y), double(d[2].z));
+            }
 			if (error)
 				*error = VPAD_READ_ERR_NONE;
 			return 1;
@@ -1022,6 +1056,14 @@ void vpadExport_VPADSetGyroDirection(PPCInterpreter_t* hCPU)
 	if (channel < VPAD_MAX_CONTROLLERS)
 	{
 		g_vpadGyroDirOverwrite[channel] = *dir;
+        std::lock_guard lock(s_motionReferenceMutex);
+        const bool accepted = s_motionReference[channel].setDirection({
+            {float(dir->x.x), float(dir->x.y), float(dir->x.z)},
+            {float(dir->y.x), float(dir->y.y), float(dir->y.z)},
+            {float(dir->z.x), float(dir->z.y), float(dir->z.z)}});
+        motion_trace::write("api", "SetGyroDirection,%u,%d", channel, int(accepted));
+        motion_trace::values("SetGyroDirection", channel, hCPU->instructionPointer, hCPU->spr.LR, {
+            float(dir->x.x),float(dir->x.y),float(dir->x.z),float(dir->y.x),float(dir->y.y),float(dir->y.z),float(dir->z.x),float(dir->z.y),float(dir->z.z)});
 	}
 	else
 	{
@@ -1029,6 +1071,19 @@ void vpadExport_VPADSetGyroDirection(PPCInterpreter_t* hCPU)
 	}
 
 	osLib_returnFromFunction(hCPU, 0);
+}
+
+void vpadExport_VPADSetGyroAngle(PPCInterpreter_t* hCPU)
+{
+    ppcDefineParamU32(channel, 0);
+    if (channel < VPAD_MAX_CONTROLLERS)
+    {
+        std::lock_guard lock(s_motionReferenceMutex);
+        const glm::vec3 a{float(hCPU->fpr[1].fpr), float(hCPU->fpr[2].fpr), float(hCPU->fpr[3].fpr)};
+        const bool accepted = s_motionReference[channel].setAngles(a);
+        motion_trace::write("api", "SetGyroAngle,%u,%d,%.6f,%.6f,%.6f", channel, int(accepted), double(a.x), double(a.y), double(a.z));
+    }
+    osLib_returnFromFunction(hCPU, 0);
 }
 
 void vpadExport_VPADGetGyroZeroDriftMode(PPCInterpreter_t* hCPU)
@@ -1064,7 +1119,9 @@ void vpadExport_VPADSetGyroZeroDriftMode(PPCInterpreter_t* hCPU)
 		}
 		else
 		{
-			g_vpadGyroZeroDriftMode[channel] = gyroMode;
+			std::lock_guard lock(s_motionReferenceMutex);
+            g_vpadGyroZeroDriftMode[channel] = gyroMode;
+            motion_trace::values("SetGyroZeroDriftMode", channel, hCPU->instructionPointer, hCPU->spr.LR, {double(gyroMode)});
 		}
 	}
 	else
@@ -1082,7 +1139,10 @@ void vpadExport_VPADSetGyroDirReviseBase(PPCInterpreter_t* hCPU)
 
 	if (channel < VPAD_MAX_CONTROLLERS)
 	{
-		g_vpadGyroDirRevise[channel].vpadGyroDirReviseBase = *dir;
+		std::lock_guard lock(s_motionReferenceMutex);
+        g_vpadGyroDirRevise[channel].vpadGyroDirReviseBase = *dir;
+        motion_trace::values("SetGyroDirReviseBase", channel, hCPU->instructionPointer, hCPU->spr.LR, {
+            float(dir->x.x),float(dir->x.y),float(dir->x.z),float(dir->y.x),float(dir->y.y),float(dir->y.z),float(dir->z.x),float(dir->z.y),float(dir->z.z)});
 	}
 	else
 	{
@@ -1098,7 +1158,9 @@ void vpadExport_VPADDisableGyroDirRevise(PPCInterpreter_t* hCPU)
 
 	if (channel < VPAD_MAX_CONTROLLERS)
 	{
-		g_vpadGyroDirRevise[channel].enabled = false;
+		std::lock_guard lock(s_motionReferenceMutex);
+        g_vpadGyroDirRevise[channel].enabled = false;
+        motion_trace::values("DisableGyroDirRevise", channel, hCPU->instructionPointer, hCPU->spr.LR, {0});
 	}
 	else
 	{
@@ -1114,7 +1176,9 @@ void vpadExport_VPADSetGyroDirReviseParam(PPCInterpreter_t* hCPU)
 
 	if (channel < VPAD_MAX_CONTROLLERS)
 	{
-		g_vpadGyroDirRevise[channel].weight = (float)hCPU->fpr[1].fpr;
+		std::lock_guard lock(s_motionReferenceMutex);
+        g_vpadGyroDirRevise[channel].weight = (float)hCPU->fpr[1].fpr;
+        motion_trace::values("SetGyroDirReviseParam", channel, hCPU->instructionPointer, hCPU->spr.LR, {hCPU->fpr[1].fpr});
 	}
 	else
 	{
@@ -1122,6 +1186,20 @@ void vpadExport_VPADSetGyroDirReviseParam(PPCInterpreter_t* hCPU)
 	}
 
 	osLib_returnFromFunction(hCPU, 0);
+}
+
+// Diagnostic/state support: records the game's request. The existing revise
+// parameters are still not applied to fusion; this is not a motion fix.
+void vpadExport_VPADEnableGyroDirRevise(PPCInterpreter_t* hCPU)
+{
+    ppcDefineParamU32(channel, 0);
+    if (channel < VPAD_MAX_CONTROLLERS)
+    {
+        std::lock_guard lock(s_motionReferenceMutex);
+        g_vpadGyroDirRevise[channel].enabled = true;
+        motion_trace::values("EnableGyroDirRevise", channel, hCPU->instructionPointer, hCPU->spr.LR, {1});
+    }
+    osLib_returnFromFunction(hCPU, 0);
 }
 
 namespace vpad
@@ -1148,6 +1226,7 @@ namespace vpad
 
 	void start()
 	{
+        { std::lock_guard lock(s_motionReferenceMutex); for (auto& reference : s_motionReference) reference = {}; }
 		coreinit::OSCreateAlarm(&g_vpad.alarm);
 		const uint64 start_tick = coreinit::OSGetTime();
 		const uint64 period_tick = coreinit::EspressoTime::GetTimerClock() * 5 / 1000;
@@ -1211,10 +1290,12 @@ namespace vpad
 
 			osLib_addFunction("vpad", "VPADGetGyroZeroDriftMode", vpadExport_VPADGetGyroZeroDriftMode);
 			osLib_addFunction("vpad", "VPADSetGyroDirection", vpadExport_VPADSetGyroDirection);
+            osLib_addFunction("vpad", "VPADSetGyroAngle", vpadExport_VPADSetGyroAngle);
 			osLib_addFunction("vpad", "VPADSetGyroZeroDriftMode", vpadExport_VPADSetGyroZeroDriftMode);
 
 			osLib_addFunction("vpad", "VPADSetGyroDirReviseBase", vpadExport_VPADSetGyroDirReviseBase);
 			osLib_addFunction("vpad", "VPADDisableGyroDirRevise", vpadExport_VPADDisableGyroDirRevise);
+            osLib_addFunction("vpad", "VPADEnableGyroDirRevise", vpadExport_VPADEnableGyroDirRevise);
 			osLib_addFunction("vpad", "VPADSetGyroDirReviseParam", vpadExport_VPADSetGyroDirReviseParam);
 		};
 	}s_COSVPADModule;

@@ -30,7 +30,11 @@ import android.graphics.Color
 import android.view.Gravity
 import android.view.Surface
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import java.net.Inet4Address
 import android.net.ConnectivityManager
@@ -78,6 +82,7 @@ class MainActivity : Activity(), SensorEventListener {
     private var lastStreamIp: String? = null
     private var foreground = false
     private var fullScreen = false
+    private var virtualOn = false
     private lateinit var connectivity: ConnectivityManager
     private lateinit var wifiStatus: TextView
     private var watchingWifi = false
@@ -146,15 +151,43 @@ class MainActivity : Activity(), SensorEventListener {
             startStream(pcIp.text.toString().trim())
         }
         holdButton(R.id.mic) { sample.mic = it }
+        val connectPrefs = getSharedPreferences("pad_connect", Context.MODE_PRIVATE)
+        virtualOn = connectPrefs.getBoolean("virtual_pad", false)
+        buildVirtualPad(findViewById(R.id.virtual_left), findViewById(R.id.virtual_right))
         findViewById<Button>(R.id.settings).setOnClickListener {
-            val labels = arrayOf("Native", "720p", "1080p")
+            val box = LinearLayout(this)
+            box.orientation = LinearLayout.VERTICAL
+            box.setPadding(48, 24, 48, 0)
+            val picture = TextView(this)
+            picture.text = "Picture"
+            box.addView(picture)
+            val group = RadioGroup(this)
+            arrayOf("Native", "720p", "1080p").forEachIndexed { index, name ->
+                val choice = RadioButton(this)
+                choice.id = index + 1
+                choice.text = name
+                group.addView(choice)
+            }
+            group.check(sample.streamPreset + 1)
+            group.setOnCheckedChangeListener { _, id ->
+                val which = (id - 1).coerceIn(0, 2)
+                sample.streamPreset = which
+                connectPrefs.edit().putInt("stream_preset", which).apply()
+            }
+            box.addView(group)
+            val virtual = CheckBox(this)
+            virtual.text = "Virtual controls"
+            virtual.isChecked = virtualOn
+            virtual.setOnCheckedChangeListener { _, on ->
+                virtualOn = on
+                connectPrefs.edit().putBoolean("virtual_pad", on).apply()
+                applyVirtual()
+            }
+            box.addView(virtual)
             AlertDialog.Builder(this)
-                .setTitle("Picture")
-                .setSingleChoiceItems(labels, sample.streamPreset) { dialog, which ->
-                    sample.streamPreset = which
-                    getSharedPreferences("pad_connect", Context.MODE_PRIVATE).edit().putInt("stream_preset", which).apply()
-                    dialog.dismiss()
-                }
+                .setTitle("Settings")
+                .setView(box)
+                .setPositiveButton("Done", null)
                 .show()
         }
         val controls = findViewById<android.view.View>(R.id.controls)
@@ -248,6 +281,7 @@ class MainActivity : Activity(), SensorEventListener {
         status.visibility = if (immersive) View.GONE else View.VISIBLE
         wifiStatus.visibility = if (immersive) View.GONE else View.VISIBLE
         back.visibility = if (mode == PadImageView.IrMode.CONTRAST) View.VISIBLE else View.GONE
+        applyVirtual()
         val attrs = window.attributes
         attrs.screenBrightness = if (irOn) 1f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         if (Build.VERSION.SDK_INT >= 28)
@@ -271,6 +305,67 @@ class MainActivity : Activity(), SensorEventListener {
                     View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             else View.SYSTEM_UI_FLAG_VISIBLE
         }
+    }
+
+    private fun applyVirtual() {
+        val show = virtualOn && !fullScreen && image.irMode == PadImageView.IrMode.OFF
+        findViewById<View>(R.id.virtual_left).visibility = if (show) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.virtual_right).visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) {
+            sample.lx = 128; sample.ly = 128; sample.rx = 128; sample.ry = 128
+            sample.buttons = 0
+        }
+    }
+
+    private fun buildVirtualPad(left: LinearLayout, right: LinearLayout) {
+        fun face(parent: LinearLayout, label: String, bit: Int) {
+            val button = Button(this)
+            button.text = label
+            button.textSize = 12f
+            button.setPadding(0, 0, 0, 0)
+            button.isFocusable = false
+            button.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            button.setOnTouchListener { _, event ->
+                setBit(bit, event.action != MotionEvent.ACTION_UP && event.action != MotionEvent.ACTION_CANCEL)
+                true
+            }
+            parent.addView(button)
+        }
+        fun stick(parent: LinearLayout, horizontal: (Int) -> Unit, vertical: (Int) -> Unit) {
+            val pad = View(this)
+            pad.setBackgroundColor(Color.DKGRAY)
+            pad.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.6f)
+            pad.setOnTouchListener { view, event ->
+                val up = event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL
+                if (up || view.width <= 0 || view.height <= 0) {
+                    horizontal(128)
+                    vertical(128)
+                } else {
+                    val x = (event.x / view.width).coerceIn(0f, 1f)
+                    val y = (event.y / view.height).coerceIn(0f, 1f)
+                    horizontal((x * 255f).roundToInt())
+                    vertical((255f - y * 255f).roundToInt())
+                }
+                true
+            }
+            parent.addView(pad)
+        }
+        face(left, "L", PadBits.L1)
+        face(left, "ZL", PadBits.L2)
+        face(left, "Up", PadBits.UP)
+        face(left, "Left", PadBits.LEFT)
+        face(left, "Right", PadBits.RIGHT)
+        face(left, "Down", PadBits.DOWN)
+        stick(left, { sample.lx = it }, { sample.ly = it })
+        face(right, "R", PadBits.R1)
+        face(right, "ZR", PadBits.R2)
+        face(right, "X", PadBits.TRIANGLE)
+        face(right, "Y", PadBits.SQUARE)
+        face(right, "A", PadBits.CIRCLE)
+        face(right, "B", PadBits.CROSS)
+        face(right, "-", PadBits.SHARE)
+        face(right, "+", PadBits.OPTIONS)
+        stick(right, { sample.rx = it }, { sample.ry = it })
     }
 
     private fun holdButton(id: Int, set: (Boolean) -> Unit) {

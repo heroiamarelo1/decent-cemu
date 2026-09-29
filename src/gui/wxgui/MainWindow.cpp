@@ -25,6 +25,8 @@
 #include "wxHelper.h"
 #include "helpers/wxHelpers.h"
 #include "PadViewFrame.h"
+#include "GamePadViewStream.h"
+#include "input/api/DSU/DSUController.h"
 
 #if BOOST_OS_WINDOWS
 #include <iphlpapi.h>
@@ -376,6 +378,8 @@ MainWindow::MainWindow()
 
 	m_last_mouse_move_time = std::chrono::steady_clock::now();
 
+	m_androidPadConnectTimer.SetOwner(this, wxWindow::NewControlId());
+	Bind(wxEVT_TIMER, &MainWindow::OnAndroidPadConnectTimer, this, m_androidPadConnectTimer.GetId());
 	m_timer = new wxTimer(this, MAINFRAME_ID_TIMER1);
 	m_timer->Start(500);
 
@@ -400,6 +404,8 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow()
 {
+	m_androidPadConnectTimer.Stop();
+	m_androidPadCandidate.reset();
 	if (m_padView)
 	{
 		m_padView->Destroy();
@@ -508,6 +514,9 @@ wxString MainWindow::GetInitialWindowTitle()
 
 void MainWindow::OnClose(wxCloseEvent& event)
 {
+	m_androidPadClosing = true;
+	m_androidPadConnectTimer.Stop();
+	m_androidPadCandidate.reset();
 	if (m_debugger_window)
 	{
 		m_debugger_window->CleanupForDestroy();
@@ -934,6 +943,33 @@ void MainWindow::TogglePadView()
 #endif
 WXLRESULT MainWindow::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam)
 {
+	if (nMsg == kAndroidPadVideoConnectedMessage && GamePadViewStream_IsCaptureProcess(static_cast<uint32_t>(lParam)))
+	{
+		if (m_androidPadClosing) return 0;
+		const uint32_t address = static_cast<uint32_t>(wParam);
+		if (!address)
+		{
+			m_androidPadConnectTimer.Stop();
+			m_androidPadCandidate.reset();
+			m_androidPadConfirmed = false;
+			return 0;
+		}
+		m_androidPadConfirmed = false;
+		try
+		{
+			const auto ip = boost::asio::ip::address_v4(address).to_string();
+			m_androidPadCandidate = std::make_shared<DSUController>(0, DSUProviderSettings{ip, 26760});
+			m_androidPadCandidate->connect();
+			m_androidPadConnectDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			m_androidPadConnectTimer.Start(100);
+			cemuLog_log(LogType::Force, "[Android GamePad] Video connected; discovering DSU at {}:26760", ip);
+		}
+		catch (const std::exception& ex)
+		{
+			cemuLog_log(LogType::Force, "[Android GamePad] Auto-connect failed: {}", ex.what());
+		}
+		return 0;
+	}
 	if (nMsg == WM_DEVICECHANGE)
 	{
 		if (wParam == DBT_DEVNODES_CHANGED)
@@ -945,6 +981,27 @@ WXLRESULT MainWindow::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lPara
 	return wxFrame::MSWWindowProc(nMsg, wParam, lParam);
 }
 #endif
+
+void MainWindow::OnAndroidPadConnectTimer(wxTimerEvent& event)
+{
+	if (!m_androidPadCandidate) { m_androidPadConnectTimer.Stop(); return; }
+	if (m_androidPadCandidate->is_connected() && m_androidPadCandidate->is_android_gamepad())
+	{
+		InputManager::instance().attach_android_gamepad(m_androidPadCandidate);
+		if (!m_androidPadConfirmed)
+		{
+			m_androidPadConfirmed = true;
+			m_androidPadConnectTimer.Start(500);
+		}
+	}
+	else if (!m_androidPadConfirmed && std::chrono::steady_clock::now() >= m_androidPadConnectDeadline)
+	{
+		cemuLog_log(LogType::Force, "[Android GamePad] DSU discovery timed out; controller profiles unchanged");
+		m_androidPadConnectTimer.Stop();
+		m_androidPadCandidate.reset();
+	}
+	else m_androidPadCandidate->connect();
+}
 
 void MainWindow::OpenSettings()
 {

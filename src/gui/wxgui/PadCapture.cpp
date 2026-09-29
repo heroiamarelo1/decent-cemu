@@ -12,6 +12,7 @@
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
+#include "GamePadViewStream.h"
 #include <atomic>
 #include <cstdlib>
 #include <mutex>
@@ -352,6 +353,7 @@ bool SendAll(SOCKET socket, const char* data, int size)
 int wmain(int argc, wchar_t** argv)
 {
 	const DWORD parentId = argc > 1 ? static_cast<DWORD>(_wtol(argv[1])) : 0;
+	const HWND mainWindow = argc > 2 ? reinterpret_cast<HWND>(static_cast<uintptr_t>(_wcstoui64(argv[2], nullptr, 10))) : nullptr;
 	HANDLE parent = parentId ? OpenProcess(SYNCHRONIZE, FALSE, parentId) : nullptr;
 	SetProcessDPIAware();
 	winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -380,7 +382,9 @@ int wmain(int argc, wchar_t** argv)
 	{
 		if (parent && WaitForSingleObject(parent, 0) == WAIT_OBJECT_0)
 			break;
-		SOCKET client = accept(listenSocket, nullptr, nullptr);
+		sockaddr_in peer{};
+		int peerLength = sizeof(peer);
+		SOCKET client = accept(listenSocket, reinterpret_cast<sockaddr*>(&peer), &peerLength);
 		if (client == INVALID_SOCKET)
 		{
 			HWND window = nullptr;
@@ -392,6 +396,9 @@ int wmain(int argc, wchar_t** argv)
 			Sleep(4);
 			continue;
 		}
+		DWORD windowProcessId = 0;
+		if (mainWindow && GetWindowThreadProcessId(mainWindow, &windowProcessId) && windowProcessId == parentId)
+			PostMessageW(mainWindow, kAndroidPadVideoConnectedMessage, ntohl(peer.sin_addr.s_addr), GetCurrentProcessId());
 		u_long peek = 1;
 		ioctlsocket(client, FIONBIO, &peek);
 		uint64_t seen = 0;
@@ -435,6 +442,9 @@ int wmain(int argc, wchar_t** argv)
 				break;
 		}
 		closesocket(client);
+		DWORD disconnectedWindowProcessId = 0;
+		if (mainWindow && GetWindowThreadProcessId(mainWindow, &disconnectedWindowProcessId) && disconnectedWindowProcessId == parentId)
+			PostMessageW(mainWindow, kAndroidPadVideoConnectedMessage, 0, GetCurrentProcessId());
 	}
 	capture.Close();
 	closesocket(listenSocket);

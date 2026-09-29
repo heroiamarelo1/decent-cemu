@@ -16,6 +16,7 @@
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 #include "Cafe/CafeSystem.h"
 
+class DSUController;
 class DebuggerWindow2;
 struct GameEntry;
 class DiscordPresence;
@@ -164,6 +165,12 @@ private:
 	bool InstallUpdate(const fs::path& metaFilePath);
 
 	void OnTimer(wxTimerEvent& event);
+	void OnAndroidPadConnectTimer(wxTimerEvent& event);
+	wxTimer m_androidPadConnectTimer;
+	std::shared_ptr<DSUController> m_androidPadCandidate;
+	std::chrono::steady_clock::time_point m_androidPadConnectDeadline{};
+	bool m_androidPadConfirmed = false;
+	bool m_androidPadClosing = false;
 
 	// CafeSystem implementation
 	void CafeRecreateCanvas() override;

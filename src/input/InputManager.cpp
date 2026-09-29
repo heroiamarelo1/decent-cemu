@@ -2,6 +2,7 @@
 #include "config/ActiveSettings.h"
 #include "config/CemuConfig.h"
 #include "input/ControllerFactory.h"
+#include "input/api/DSU/DSUController.h"
 #if defined(SUPPORTS_WIIMOTE)
 #include "input/api/Wiimote/NativeWiimoteController.h"
 #endif
@@ -1088,6 +1089,49 @@ std::optional<glm::ivec2> InputManager::get_right_down_mouse_info(bool* is_pad)
 	}
 
 	return {};
+}
+
+bool InputManager::attach_android_gamepad(const std::shared_ptr<ControllerBase>& controller)
+{
+	const auto android = std::dynamic_pointer_cast<DSUController>(controller);
+	if (!android || !android->is_connected() || !android->is_android_gamepad()) return false;
+	auto pad = get_vpad_controller(0);
+	if (!pad)
+	{
+		for (size_t player = 0; player < kMaxController; ++player)
+		{
+			if (!get_controller(player))
+			{
+				pad = std::dynamic_pointer_cast<VPADController>(set_controller(player, EmulatedController::VPAD));
+				break;
+			}
+		}
+	}
+	if (!pad) return false;
+	const auto physical = pad->get_controller_snapshot();
+	// Do not replace a controller that the user is currently using.
+	for (const auto& c : physical)
+		if (c->is_connected()) return false;
+	bool replaced = false;
+	for (const auto& c : physical)
+	{
+		if (c->api() == InputAPI::DSUClient)
+		{
+			android->set_settings(c->get_settings());
+			android->set_use_motion(true);
+			replaced = pad->replace_controller(c, android);
+			break;
+		}
+	}
+	if (!replaced)
+	{
+		android->set_use_motion(true);
+		pad->add_controller(android);
+	}
+	pad->set_default_mapping(android); // Fill only unassigned mappings.
+	if (!is_gameprofile_set(pad->player_index())) save(pad->player_index());
+	cemuLog_log(LogType::Force, "[Android GamePad] Attached video client's DSU controller to player {}", pad->player_index() + 1);
+	return true;
 }
 
 void InputManager::update_thread()

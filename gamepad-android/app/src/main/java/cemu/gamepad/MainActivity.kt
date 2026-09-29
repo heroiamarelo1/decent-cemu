@@ -26,7 +26,14 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import java.net.Inet4Address
-import java.net.NetworkInterface
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.LinkProperties
+import android.view.View
+import androidx.core.view.WindowCompat
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -54,7 +61,21 @@ class MainActivity : Activity(), SensorEventListener {
     @Volatile private var streamRunning = false
     @Volatile private var audioConnected = false
     @Volatile private var audioGeneration = 0
-    private var audioSocket: Socket? = null
+    @Volatile private var audioSocket: Socket? = null
+    @Volatile private var videoSocket: Socket? = null
+    @Volatile private var streamGeneration = 0
+    private var lastStreamIp: String? = null
+    private var foreground = false
+    private var fullScreen = false
+    private lateinit var connectivity: ConnectivityManager
+    private lateinit var wifiStatus: TextView
+    private var watchingWifi = false
+    private val wifiCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = refreshWifiAddress()
+        override fun onLost(network: Network) = refreshWifiAddress()
+        override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) = refreshWifiAddress()
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = refreshWifiAddress()
+    }
     private var lastHatX = 0f
     private var lastHatY = 0f
     private var playRotation = Surface.ROTATION_90
@@ -62,9 +83,22 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        if (Build.VERSION.SDK_INT >= 33)
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT) {
+                handleBackPressed()
+            }
         image = findViewById(R.id.pad)
         status = findViewById(R.id.status)
-        status.text = "In Decent Cemu, DSU points at ${localIp()}:26760"
+        status.text = "Enter the PC IP to connect video and audio."
+        wifiStatus = findViewById(R.id.wifi_status)
+        connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val wifiRequest = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        connectivity.registerNetworkCallback(wifiRequest, wifiCallback)
+        watchingWifi = true
+        refreshWifiAddress()
         image.onPadTouch = { down, x, y ->
             sample.touch = down
             sample.touchX = (x * 1919f).roundToInt()
@@ -93,7 +127,14 @@ class MainActivity : Activity(), SensorEventListener {
         if (sensorBarOn)
             pulseSensorBar(2)
         back.setOnClickListener { setIrMode(PadImageView.IrMode.OFF, controls, back) }
-        image.onShowControls = { setIrMode(PadImageView.IrMode.OFF, controls, back) }
+        image.onShowControls = {
+            fullScreen = false
+            setIrMode(PadImageView.IrMode.OFF, controls, back)
+        }
+        findViewById<Button>(R.id.fs).setOnClickListener {
+            fullScreen = true
+            setIrMode(PadImageView.IrMode.OFF, controls, back)
+        }
         findViewById<Button>(R.id.calibrate).setOnClickListener { beginCalibration() }
         sensors = getSystemService(SENSOR_SERVICE) as SensorManager
         val prefs = getSharedPreferences("pad_axes_v4", Context.MODE_PRIVATE)
@@ -101,6 +142,17 @@ class MainActivity : Activity(), SensorEventListener {
         if (axes.ready)
             lockPlayOrientation(if (prefs.contains("rotation")) prefs.getInt("rotation", Surface.ROTATION_90) else displayRotation())
         server.start()
+    }
+
+    @Deprecated("Legacy Android Back callback")
+    override fun onBackPressed() = handleBackPressed()
+
+    @Suppress("DEPRECATION")
+    private fun handleBackPressed() {
+        if (fullScreen || image.irMode != PadImageView.IrMode.OFF) {
+            fullScreen = false
+            setIrMode(PadImageView.IrMode.OFF, findViewById(R.id.controls), findViewById(R.id.back))
+        } else super.onBackPressed()
     }
 
     private fun beginCalibration() {
@@ -140,23 +192,38 @@ class MainActivity : Activity(), SensorEventListener {
         }, 800)
     }
 
-    private fun setIrMode(mode: PadImageView.IrMode, controls: android.view.View, back: Button) {
-        val on = mode != PadImageView.IrMode.OFF
+    private fun setIrMode(mode: PadImageView.IrMode, controls: View, back: Button) {
+        if (mode != PadImageView.IrMode.OFF) fullScreen = false
+        image.cancelPadTouch()
         image.irMode = mode
-        controls.visibility = if (on) android.view.View.GONE else android.view.View.VISIBLE
-        status.visibility = if (on) android.view.View.GONE else android.view.View.VISIBLE
-        back.visibility = if (mode == PadImageView.IrMode.CONTRAST) android.view.View.VISIBLE else android.view.View.GONE
+        val irOn = mode != PadImageView.IrMode.OFF
+        val immersive = irOn || fullScreen
+        controls.visibility = if (immersive) View.GONE else View.VISIBLE
+        status.visibility = if (immersive) View.GONE else View.VISIBLE
+        wifiStatus.visibility = if (immersive) View.GONE else View.VISIBLE
+        back.visibility = if (mode == PadImageView.IrMode.CONTRAST) View.VISIBLE else View.GONE
         val attrs = window.attributes
-        attrs.screenBrightness = if (on) 1f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        attrs.screenBrightness = if (irOn) 1f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        if (Build.VERSION.SDK_INT >= 28)
+            attrs.layoutInDisplayCutoutMode = if (immersive)
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
         window.attributes = attrs
+        WindowCompat.setDecorFitsSystemWindows(window, !immersive)
         if (Build.VERSION.SDK_INT >= 30) {
-            val controller = window.insetsController
-            if (on) {
-                controller?.hide(WindowInsets.Type.systemBars())
-                controller?.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            } else {
-                controller?.show(WindowInsets.Type.systemBars())
+            window.insetsController?.let { controller ->
+                if (immersive) {
+                    controller.hide(WindowInsets.Type.systemBars())
+                    controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                } else controller.show(WindowInsets.Type.systemBars())
             }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = if (immersive)
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            else View.SYSTEM_UI_FLAG_VISIBLE
         }
     }
 
@@ -169,6 +236,12 @@ class MainActivity : Activity(), SensorEventListener {
 
     override fun onResume() {
         super.onResume()
+        foreground = true
+        resetInputs()
+        sample.active = true
+        refreshWifiAddress()
+        setIrMode(image.irMode, findViewById(R.id.controls), findViewById(R.id.back))
+        lastStreamIp?.let { startStream(it) }
         val delay = 10000 // requested 100 Hz; integrate the actual SensorEvent timestamps
         sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sensors.registerListener(this, it, delay) }
         sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sensors.registerListener(this, it, delay) }
@@ -176,18 +249,49 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     override fun onPause() {
+        foreground = false
+        sample.active = false // Reply as disconnected, never as a fresh frozen pose.
         sensors.unregisterListener(this)
+        resetInputs()
+        stopStreams()
         super.onPause()
     }
 
-    override fun onDestroy() {
+    private fun resetInputs() {
+        sample.buttons = 0
+        sample.lx = 128; sample.ly = 128; sample.rx = 128; sample.ry = 128
+        sample.ps = false; sample.mic = false; sample.screen = false
+        sample.touch = false; sample.sensorBarCmd = 0
+        sample.motion = MotionSnapshot()
+        latestGyroTime = 0L
+        latestGyro = FloatArray(3)
+        latestMag = FloatArray(3)
+        lastHatX = 0f; lastHatY = 0f
+        stillSamples = 0
+        gravitySum = FloatArray(3); gyroSum = FloatArray(3)
+        image.cancelPadTouch()
+    }
+
+    @Synchronized
+    private fun stopStreams() {
+        ++streamGeneration
         streamRunning = false
-        audioSocket?.close()
+        ++audioGeneration
+        audioConnected = false
+        try { videoSocket?.close() } catch (_: Exception) {}
+        try { audioSocket?.close() } catch (_: Exception) {}
+        videoSocket = null; audioSocket = null
+    }
+
+    override fun onDestroy() {
+        stopStreams()
         server.stop()
+        if (watchingWifi) connectivity.unregisterNetworkCallback(wifiCallback)
         super.onDestroy()
     }
 
     override fun onSensorChanged(event: SensorEvent) {
+        if (!foreground) return
         if (event.values.take(3).any { !it.isFinite() }) return
         when (event.sensor.type) {
             Sensor.TYPE_GYROSCOPE -> {
@@ -320,39 +424,54 @@ class MainActivity : Activity(), SensorEventListener {
     private fun startStream(ip: String) {
         if (ip.isEmpty()) return
         getSharedPreferences("pad_connect", Context.MODE_PRIVATE).edit().putString("pc_ip", ip).apply()
-        streamRunning = false
-        audioSocket?.close()
-        audioConnected = false
+        lastStreamIp = ip
+        stopStreams()
+        if (!foreground) return
+        val generation = ++streamGeneration
         streamRunning = true
         status.text = "Connecting to $ip…"
         startAudio(ip)
         thread(name = "pad-video") {
+            var socket: Socket? = null
             try {
-                Socket(ip, 26761).use { socket ->
-                    runOnUiThread { status.text = "Connected to $ip" }
-                    val input = socket.getInputStream()
-                    val header = ByteArray(4)
-                    var shown = false
-                    while (streamRunning) {
-                        if (!readFully(input, header)) break
-                        val size = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).int
-                        if (size <= 0 || size > 2_000_000) break
-                        val jpeg = ByteArray(size)
-                        if (!readFully(input, jpeg)) break
-                        val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: continue
-                        runOnUiThread {
+                socket = Socket()
+                synchronized(this@MainActivity) {
+                    if (generation != streamGeneration) return@thread
+                    videoSocket = socket
+                }
+                socket.connect(InetSocketAddress(ip, 26761), 4000)
+                val input = socket.getInputStream()
+                val header = ByteArray(4)
+                var shown = false
+                while (generation == streamGeneration) {
+                    if (!readFully(input, header)) break
+                    val size = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).int
+                    if (size <= 0 || size > 2_000_000) break
+                    val jpeg = ByteArray(size)
+                    if (!readFully(input, jpeg)) break
+                    val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: continue
+                    runOnUiThread {
+                        if (generation == streamGeneration && foreground) {
                             image.bitmap = bitmap
                             if (!shown) {
                                 status.text = if (audioConnected) "Video and audio connected" else "Video connected"
                                 shown = true
                             }
-                        }
+                        } else bitmap.recycle()
                     }
                 }
             } catch (ex: Exception) {
-                runOnUiThread { status.text = ex.message ?: "Connection failed" }
+                runOnUiThread {
+                    if (generation == streamGeneration && foreground)
+                        status.text = ex.message ?: "Connection failed"
+                }
+            } finally {
+                try { socket?.close() } catch (_: Exception) {}
+                if (generation == streamGeneration) {
+                    streamRunning = false
+                    videoSocket = null
+                }
             }
-            streamRunning = false
         }
     }
 
@@ -360,16 +479,24 @@ class MainActivity : Activity(), SensorEventListener {
         val generation = ++audioGeneration
         thread(name = "pad-audio") {
             var track: AudioTrack? = null
+            var socket: Socket? = null
             try {
-                val socket = Socket(ip, 26762)
+                socket = Socket()
+                synchronized(this@MainActivity) {
+                    if (generation != audioGeneration) return@thread
+                    audioSocket = socket
+                }
+                socket.connect(InetSocketAddress(ip, 26762), 4000)
                 if (generation != audioGeneration) {
                     socket.close()
                     return@thread
                 }
-                audioSocket = socket
-                audioConnected = true
+                synchronized(this@MainActivity) {
+                    if (generation != audioGeneration) return@thread
+                    audioConnected = true
+                }
                 runOnUiThread {
-                    if (status.text == "Video connected" || status.text == "Connected to $ip")
+                    if (generation == audioGeneration && foreground && (status.text == "Video connected" || status.text == "Connected to $ip"))
                         status.text = "Video and audio connected"
                 }
                 val rate = 48000
@@ -423,7 +550,13 @@ class MainActivity : Activity(), SensorEventListener {
             } finally {
                 try { track?.stop() } catch (_: Exception) {}
                 track?.release()
-                if (generation == audioGeneration) audioConnected = false
+                try { socket?.close() } catch (_: Exception) {}
+                synchronized(this@MainActivity) {
+                    if (generation == audioGeneration) {
+                        audioConnected = false
+                        if (audioSocket === socket) audioSocket = null
+                    }
+                }
             }
         }
     }
@@ -438,13 +571,26 @@ class MainActivity : Activity(), SensorEventListener {
         return true
     }
 
-    private fun localIp(): String {
-        NetworkInterface.getNetworkInterfaces()?.toList()?.forEach { iface ->
-            iface.inetAddresses.toList().forEach { address ->
-                if (!address.isLoopbackAddress && address is Inet4Address)
-                    return address.hostAddress ?: "?"
+    private fun refreshWifiAddress() {
+        runOnUiThread {
+            if (!isDestroyed) {
+                val ip = localWifiIp()
+                wifiStatus.text = if (ip == null) "Wi-Fi: not connected (IPv4 required)"
+                    else "Wi-Fi: $ip • DSU port 26760"
             }
         }
-        return "?"
+    }
+
+    private fun localWifiIp(): String? {
+        // Query physical Wi-Fi networks even when a VPN is the default network.
+        return connectivity.allNetworks.asSequence().mapNotNull { network ->
+            val caps = connectivity.getNetworkCapabilities(network) ?: return@mapNotNull null
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@mapNotNull null
+            connectivity.getLinkProperties(network)?.linkAddresses?.asSequence()
+                ?.map { it.address }?.filterIsInstance<Inet4Address>()
+                ?.firstOrNull { !it.isLoopbackAddress && !it.isLinkLocalAddress && !it.isAnyLocalAddress }
+                ?.hostAddress
+        }.firstOrNull()
     }
 }

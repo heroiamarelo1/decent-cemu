@@ -11,9 +11,10 @@
 namespace
 {
 std::atomic<bool> g_started{false};
+std::atomic<uint32_t> g_captureProcessId{0};
 
 #if BOOST_OS_WINDOWS
-void StartCaptureProcess()
+void StartCaptureProcess(uintptr_t mainWindow)
 {
 	wchar_t path[MAX_PATH]{};
 	if (GetModuleFileNameW(nullptr, path, MAX_PATH) == 0)
@@ -28,8 +29,8 @@ void StartCaptureProcess()
 	if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
 		return;
 
-	wchar_t command[MAX_PATH + 32]{};
-	_snwprintf_s(command, _TRUNCATE, L"\"%s\" %lu", path, GetCurrentProcessId());
+	wchar_t command[MAX_PATH + 80]{};
+	_snwprintf_s(command, _TRUNCATE, L"\"%s\" %lu %llu", path, GetCurrentProcessId(), static_cast<unsigned long long>(mainWindow));
 	STARTUPINFOW start{};
 	start.cb = sizeof(start);
 	start.dwFlags = STARTF_USESHOWWINDOW;
@@ -37,17 +38,23 @@ void StartCaptureProcess()
 	PROCESS_INFORMATION process{};
 	if (!CreateProcessW(path, command, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &start, &process))
 		return;
+	g_captureProcessId.store(process.dwProcessId);
 	CloseHandle(process.hThread);
 	CloseHandle(process.hProcess);
 }
 #endif
 }
 
-void GamePadViewStream_Start()
+void GamePadViewStream_Start(uintptr_t mainWindow)
 {
 	if (g_started.exchange(true))
 		return;
 #if BOOST_OS_WINDOWS
-	std::thread(StartCaptureProcess).detach();
+	std::thread(StartCaptureProcess, mainWindow).detach();
 #endif
+}
+
+bool GamePadViewStream_IsCaptureProcess(uint32_t pid)
+{
+	return pid != 0 && pid == g_captureProcessId.load();
 }

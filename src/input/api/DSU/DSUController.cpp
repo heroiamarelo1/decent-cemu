@@ -45,6 +45,12 @@ void DSUController::load(const pugi::xml_node& node)
 	connect();
 }
 
+bool DSUController::is_android_gamepad() const
+{
+	const auto state = m_provider->get_state(m_index);
+	return state.coherent_motion && state.info.mac_address == MACAddress_t{0x02, 0x67, 0x60, 0x00, 0x00, 0x01};
+}
+
 bool DSUController::connect()
 {
 	if (is_connected())

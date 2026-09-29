@@ -10,8 +10,8 @@ android {
         applicationId = "cemu.gamepad"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1-motion-preview"
+        versionCode = 4
+        versionName = "1.2.1-back"
     }
     buildTypes {
         release {

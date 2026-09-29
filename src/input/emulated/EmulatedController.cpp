@@ -282,6 +282,24 @@ PositionVisibility EmulatedController::GetPositionVisibility() const
 	return PositionVisibility::NONE;
 }
 
+std::vector<std::shared_ptr<ControllerBase>> EmulatedController::get_controller_snapshot() const
+{
+	std::shared_lock lock(m_mutex);
+	return m_controllers;
+}
+
+bool EmulatedController::replace_controller(const std::shared_ptr<ControllerBase>& previous, const std::shared_ptr<ControllerBase>& next)
+{
+	std::scoped_lock lock(m_mutex);
+	const auto found = std::find(m_controllers.begin(), m_controllers.end(), previous);
+	if (found == m_controllers.end()) return false;
+	*found = next;
+	for (auto& [id, mapping] : m_mappings)
+		if (mapping.controller.lock() == previous)
+			mapping.controller = next;
+	return true;
+}
+
 void EmulatedController::add_controller(std::shared_ptr<ControllerBase> controller)
 {
 	controller->connect();

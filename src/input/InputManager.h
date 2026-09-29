@@ -73,6 +73,7 @@ public:
 
 	void apply_game_profile();
 	void on_device_changed();
+	bool attach_android_gamepad(const std::shared_ptr<ControllerBase>& controller);
 	// When enabled, connected Wiimotes fill WPAD channels from the first and the LED matches that player.
 	void assign_wiimotes();
 	void create_missing_wiimote_profiles(const std::vector<size_t>& devices);

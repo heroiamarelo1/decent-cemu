@@ -78,6 +78,8 @@ public:
 	glm::vec2 get_prev_position() const;
 	PositionVisibility GetPositionVisibility() const;
 
+	std::vector<std::shared_ptr<ControllerBase>> get_controller_snapshot() const;
+	bool replace_controller(const std::shared_ptr<ControllerBase>& previous, const std::shared_ptr<ControllerBase>& next);
 	void add_controller(std::shared_ptr<ControllerBase> controller);
 	void remove_controller(const std::shared_ptr<ControllerBase>& controller);
 	void clear_controllers();

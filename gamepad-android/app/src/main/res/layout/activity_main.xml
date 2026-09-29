@@ -1,89 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#000000"
-    android:keepScreenOn="true"
-    android:orientation="vertical">
-
-    <LinearLayout
-        android:id="@+id/controls"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="4dp">
-
-        <EditText
-            android:id="@+id/pc_ip"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:hint="PC IP"
-            android:inputType="text"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#88FFFFFF" />
-
-        <Button
-            android:id="@+id/connect"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Video" />
-
-        <Button
-            android:id="@+id/home"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Home" />
-
-        <Button
-            android:id="@+id/tv"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="TV" />
-
-        <Button
-            android:id="@+id/mic"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Mic" />
-
-        <Button
-            android:id="@+id/ir"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="IR" />
-
-        <Button
-            android:id="@+id/ir_points"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="IR+" />
-
-        <Button
-            android:id="@+id/calibrate"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Calibrate" />
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="#000000" android:keepScreenOn="true" android:orientation="vertical">
+    <LinearLayout android:id="@+id/controls" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:orientation="horizontal" android:paddingHorizontal="2dp">
+        <EditText android:id="@+id/pc_ip" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="2" android:minWidth="0dp" android:hint="PC IP"
+            android:inputType="textUri" android:singleLine="true" android:textSize="13sp"
+            android:textColor="#FFFFFF" android:textColorHint="#88FFFFFF" />
+        <Button android:id="@+id/connect" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:minWidth="0dp" android:minHeight="0dp"
+            android:paddingHorizontal="1dp" android:textSize="11sp" android:maxLines="1"
+            android:text="Video" android:contentDescription="Connect video and audio" />
+        <Button android:id="@+id/home" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:minWidth="0dp" android:minHeight="0dp"
+            android:paddingHorizontal="1dp" android:textSize="11sp" android:maxLines="1"
+            android:text="Home" android:contentDescription="Home" />
+        <Button android:id="@+id/tv" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:minWidth="0dp" android:minHeight="0dp"
+            android:paddingHorizontal="1dp" android:textSize="11sp" android:maxLines="1"
+            android:text="TV" android:contentDescription="Show TV" />
+        <Button android:id="@+id/mic" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:minWidth="0dp" android:minHeight="0dp"
+            android:paddingHorizontal="1dp" android:textSize="11sp" android:maxLines="1"
+            android:text="MIC" android:contentDescription="Hold to blow microphone" />
+        <Button android:id="@+id/ir" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:minWidth="0dp" android:minHeight="0dp"
+            android:paddingHorizontal="1dp" android:textSize="11sp" android:maxLines="1"
+            android:text="IR" android:contentDescription="Infrared contrast" />
+        <Button android:id="@+id/ir_points" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:minWidth="0dp" android:minHeight="0dp"
+            android:paddingHorizontal="1dp" android:textSize="11sp" android:maxLines="1"
+            android:text="IR+" android:contentDescription="Toggle sensor bar" />
+        <Button android:id="@+id/calibrate" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:minWidth="0dp" android:minHeight="0dp"
+            android:paddingHorizontal="1dp" android:textSize="11sp" android:maxLines="1"
+            android:text="CAL" android:contentDescription="Calibrate motion" />
+        <Button android:id="@+id/fs" android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:minWidth="0dp" android:minHeight="0dp"
+            android:paddingHorizontal="1dp" android:textSize="11sp" android:maxLines="1"
+            android:text="FS" android:contentDescription="Fullscreen; use two fingers to exit" />
     </LinearLayout>
-
-    <cemu.gamepad.PadImageView
-        android:id="@+id/pad"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
-
-    <Button
-        android:id="@+id/back"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="end"
-        android:text="Back"
-        android:visibility="gone" />
-
-    <TextView
-        android:id="@+id/status"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:padding="4dp"
-        android:textColor="#FFFFFF" />
+    <cemu.gamepad.PadImageView android:id="@+id/pad" android:layout_width="match_parent"
+        android:layout_height="0dp" android:layout_weight="1" />
+    <Button android:id="@+id/back" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="end" android:text="Back" android:visibility="gone" />
+    <TextView android:id="@+id/wifi_status" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingHorizontal="4dp" android:textSize="12sp" android:textColor="#FFFFFF" />
+    <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingHorizontal="4dp" android:textSize="12sp" android:textColor="#FFFFFF" />
 </LinearLayout>

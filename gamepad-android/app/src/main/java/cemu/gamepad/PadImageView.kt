@@ -50,15 +50,9 @@ class PadImageView(context: Context, attrs: AttributeSet?) : View(context, attrs
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
         val frame = bitmap
+        updateImageRect()
         val viewW = width.toFloat()
-        val viewH = height.toFloat()
-        if (viewW <= 0f || viewH <= 0f) return
-        val frameW = if (frame != null && !frame.isRecycled) frame.width.toFloat() else 854f
-        val frameH = if (frame != null && !frame.isRecycled) frame.height.toFloat() else 480f
-        val scale = minOf(viewW / frameW, viewH / frameH)
-        val w = frameW * scale
-        val h = frameH * scale
-        image.set((viewW - w) / 2f, (viewH - h) / 2f, (viewW + w) / 2f, (viewH + h) / 2f)
+        if (width <= 0 || height <= 0) return
         if (irMode == IrMode.POINTS) {
             val dpi = resources.displayMetrics.xdpi
             val radius = 6f * dpi / 25.4f
@@ -72,13 +66,50 @@ class PadImageView(context: Context, attrs: AttributeSet?) : View(context, attrs
             canvas.drawBitmap(frame, null, image, paint)
     }
 
+    private var controlsGesture = false
+
+    private fun updateImageRect() {
+        val frame = bitmap
+        val viewW = width.toFloat()
+        val viewH = height.toFloat()
+        if (viewW <= 0f || viewH <= 0f) { image.setEmpty(); return }
+        val frameW = if (frame != null && !frame.isRecycled) frame.width.toFloat() else 854f
+        val frameH = if (frame != null && !frame.isRecycled) frame.height.toFloat() else 480f
+        val scale = minOf(viewW / frameW, viewH / frameH)
+        val w = frameW * scale
+        val h = frameH * scale
+        image.set((viewW - w) / 2f, (viewH - h) / 2f, (viewW + w) / 2f, (viewH + h) / 2f)
+    }
+
+    fun cancelPadTouch() {
+        onPadTouch?.invoke(false, 0f, 0f)
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount >= 2)
+        val action = event.actionMasked
+        if (action == MotionEvent.ACTION_DOWN) controlsGesture = false
+        if (action == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount >= 2) {
+            controlsGesture = true
+            cancelPadTouch()
             onShowControls?.invoke()
-        val down = event.action != MotionEvent.ACTION_UP && event.action != MotionEvent.ACTION_CANCEL
+            return true
+        }
+        if (controlsGesture) {
+            cancelPadTouch()
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)
+                controlsGesture = false
+            return true
+        }
+        // The drawing and input paths share this calculation, including after an FS resize.
+        updateImageRect()
+        val down = action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL
+        if (image.isEmpty || bitmap == null || !image.contains(event.x, event.y)) {
+            cancelPadTouch() // Letterbox borders do not become taps on a game edge.
+            return true
+        }
         val x = ((event.x - image.left) / image.width()).coerceIn(0f, 1f)
         val y = ((event.y - image.top) / image.height()).coerceIn(0f, 1f)
-        onPadTouch?.invoke(down && image.width() > 0f, x, y)
+        onPadTouch?.invoke(down, x, y)
         return true
     }
 }

@@ -39,7 +39,7 @@ PadViewFrame::PadViewFrame(wxFrame* parent)
 	: wxFrame(nullptr, wxID_ANY, _("GamePad View"), wxDefaultPosition, wxDefaultSize, wxMINIMIZE_BOX | wxMAXIMIZE_BOX | wxSYSTEM_MENU | wxCAPTION | wxCLIP_CHILDREN | wxRESIZE_BORDER | wxCLOSE_BOX | wxWANTS_CHARS)
 {
 	g_window_info.window_pad = initHandleContextFromWxWidgetsWindow(this);
-	GamePadViewStream_Start();
+	GamePadViewStream_Start(reinterpret_cast<uintptr_t>(parent->GetHandle()));
 
 	SetIcon(wxICON(M_WND_ICON128));
 	wxWindow::EnableTouchEvents(wxTOUCH_PAN_GESTURES);

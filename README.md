@@ -16,21 +16,20 @@ This is a vibe-coded version of Cemu, build so you can have features the officia
 The phone and the PC have to be on the same network. In Cemu, **Gamepad on Android**
 Connect a bluetooth controller to the phone and add it as a DSUController. Put both IPs on both places and enjoy the ride.
 
-## Android motion update — 2.6.0.2
+## Latest update — 2.6.0.3
 
 [Download the latest release](https://github.com/heroiamarelo1/decent-cemu/releases/latest).
 
-Corrects the Android GamePad motion axes, including left/right tilt. Direction,
-acceleration and gyro now use a consistent coordinate conversion. Slow motion,
-sensor timing and the game's orientation calibration are also handled together.
+Connect the phone app's Video stream and Cemu now discovers and connects that
+phone as the GamePad automatically when no GamePad controller is connected.
+Android Back exits fullscreen. The two-finger gesture remains available too.
 
-Confirmed in hands-on testing: Nintendo Land's Donkey Kong steering,
-Game & Wario's Fronks, and Wii Party U's Spiked-Ball Brawl. Other games still
-need testing; this is not a claim of complete original GamePad compatibility.
+This update also fixes microphone input for Nintendo Land's Donkey Kong blow
+section. Confirmed in hands-on testing.
 
-Replace your Cemu executable and install the APK attached to this release.
-If you already have the tested `1.1-motion-preview` Android app, keep it: no
-further APK update is required. Calibrate the phone flat, screen facing up.
+Download the Cemu executable, `PadCapture.exe` and Android APK from the latest
+release. Put both Windows files in the same Cemu folder, then install the APK.
+The motion-axis fixes confirmed in 2.6.0.2 remain included.
 
 An experimental Donkey Kong horizontal guard is **not included**. If you tested
 it locally, leave `Donkey Kong horizontal guard` disabled in Graphic packs.

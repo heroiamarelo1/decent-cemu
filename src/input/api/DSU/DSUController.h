@@ -25,6 +25,7 @@ public:
 	void save(pugi::xml_node& node) override;
 	void load(const pugi::xml_node& node) override;
 
+	bool is_android_gamepad() const;
 	bool connect() override;
 	bool is_connected() override;
 	

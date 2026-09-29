@@ -2,6 +2,17 @@
 #include "input/InputManager.h"
 #include "audio/IAudioInputAPI.h"
 #include "config/CemuConfig.h"
+#include <cstdlib>
+#include <atomic>
+
+static bool mic_trace_enabled()
+{
+	static const bool enabled = std::getenv("DECENT_MIC_TRACE") != nullptr;
+	return enabled;
+}
+static std::atomic<uint64> micStatusCalls{0};
+static std::atomic<uint64> micConsumedSamples{0};
+
 
 enum class MIC_RESULT
 {
@@ -136,6 +147,8 @@ void micExport_MICInit(PPCInterpreter_t* hCPU)
 	MICStatus.drc[drcIndex].readIndex = 0;
 	MICStatus.drc[drcIndex].writeIndex = 0;
 	MICStatus.drc[drcIndex].isInited = true;
+	if (mic_trace_enabled())
+		cemuLog_log(LogType::Force, "[MIC trace] Init channel={} size={} buffer={:08x}", drcIndex, MICStatus.drc[drcIndex].ringbufferSize, _swapEndianU32(micRingbuffer->samples));
 	// init default states
 	MICStatus.drc[drcIndex].echoCancellation = 1; // guessed
 	MICStatus.drc[drcIndex].autoSelection = 1; // guessed
@@ -203,6 +216,8 @@ void micExport_MICOpen(PPCInterpreter_t* hCPU)
 		return;
 	}
 	// success
+	if (mic_trace_enabled())
+		cemuLog_log(LogType::Force, "[MIC trace] Open channel={}", drcIndex);
 	MICStatus.drc[drcIndex].isOpen = true;
 	osLib_returnFromFunction(hCPU, (uint32)MIC_RESULT::SUCCESS);
 
@@ -233,6 +248,8 @@ void micExport_MICClose(PPCInterpreter_t* hCPU)
 		return;
 	}
 	// success
+	if (mic_trace_enabled())
+		cemuLog_log(LogType::Force, "[MIC trace] Close channel={}", drcIndex);
 	MICStatus.drc[drcIndex].isOpen = false;
 	osLib_returnFromFunction(hCPU, (uint32)MIC_RESULT::SUCCESS);
 
@@ -265,12 +282,17 @@ void micExport_MICGetStatus(PPCInterpreter_t* hCPU)
 	micStatus->flags = micFlags;
 	micStatus->numSamplesAvailable = mic_availableSamples(drcIndex);
 	micStatus->readIndex = MICStatus.drc[drcIndex].readIndex;
+	const auto statusCallCount = ++micStatusCalls;
+	if (mic_trace_enabled() && (statusCallCount == 1 || statusCallCount % 128 == 0))
+		cemuLog_log(LogType::Force, "[MIC trace] Status channel={} flags={} available={} read={} write={} calls={}", drcIndex, static_cast<uint32>(micFlags), mic_availableSamples(drcIndex), MICStatus.drc[drcIndex].readIndex, MICStatus.drc[drcIndex].writeIndex, statusCallCount);
 	osLib_returnFromFunction(hCPU, (uint32)MIC_RESULT::SUCCESS);
 }
 
 void micExport_MICGetState(PPCInterpreter_t* hCPU)
 {
 	// debug_printf("MICGetState(%d,%d,0x%08x)\n", hCPU->gpr[3], hCPU->gpr[4], hCPU->gpr[5]);
+	if (mic_trace_enabled())
+		cemuLog_log(LogType::Force, "[MIC trace] GetState handle={} state={}", hCPU->gpr[3], hCPU->gpr[4]);
 	// parameters:
 	// r3	uint32		micHandle
 	// r4	uint32		stateId
@@ -329,6 +351,8 @@ void micExport_MICGetState(PPCInterpreter_t* hCPU)
 
 void micExport_MICSetState(PPCInterpreter_t* hCPU)
 {
+	if (mic_trace_enabled())
+		cemuLog_log(LogType::Force, "[MIC trace] SetState handle={} state={} value={}", hCPU->gpr[3], hCPU->gpr[4], hCPU->gpr[5]);
 	uint32 micHandle = hCPU->gpr[3];
 	if( micHandle != MIC_HANDLE_DRC0 && micHandle != MIC_HANDLE_DRC1 )
 	{
@@ -394,6 +418,7 @@ void micExport_MICSetDataConsumed(PPCInterpreter_t* hCPU)
 	}
 	else
 	{
+		micConsumedSamples += numConsumedSamples;
 		MICStatus.drc[drcIndex].readIndex += numConsumedSamples;
 		MICStatus.drc[drcIndex].readIndex %= MICStatus.drc[drcIndex].ringbufferSize;
 		osLib_returnFromFunction(hCPU, 0);
@@ -428,31 +453,56 @@ void mic_updateOnAXFrame()
 
 	std::shared_lock lock(g_audioInputMutex);
 	mic_updateDevicePlayState(true);
+	// AX calls this every 3 ms: feed exactly 96 samples at 32 kHz.
+	sint16 micSampleData[MIC_SAMPLES_PER_3MS_32KHZ]{};
 	if (g_inputAudio)
-	{
-		sint16 micSampleData[MIC_SAMPLES_PER_3MS_32KHZ];
 		g_inputAudio->ConsumeBlock(micSampleData);
-		mic_feedSamples(0, micSampleData, MIC_SAMPLES_PER_3MS_32KHZ);
+
+	auto controller = InputManager::instance().get_vpad_controller(drcIndex);
+	const bool blowPressed = controller && controller->is_mic_active();
+	static bool wasBlowPressed = false;
+	if (blowPressed != wasBlowPressed)
+	{
+		cemuLog_log(LogType::Force, "[MIC] Simulated blow {} (96 samples/frame, 32000 Hz)", blowPressed ? "on" : "off");
+		wasBlowPressed = blowPressed;
+	}
+
+	// A held blow button overrides capture. Otherwise retain real microphone input.
+	// Continuous, zero-mean broadband noise avoids the old near-DC blocks generated
+	// from the wall clock. Three low-pass stages emphasize the low-frequency turbulence of a breath.
+	// Keep filter state between AX blocks so the spectrum is independent of callback timing.
+	static uint32 noiseState = 0x6D2B79F5u;
+	static float filteredNoise[3]{};
+	if (blowPressed)
+	{
+		for (auto& sample : micSampleData)
+		{
+			noiseState ^= noiseState << 13;
+			noiseState ^= noiseState >> 17;
+			noiseState ^= noiseState << 5;
+			const float noise = (static_cast<sint32>(noiseState >> 16) - 32768) * (28000.0f / 32768.0f);
+			filteredNoise[0] += 0.12f * (noise - filteredNoise[0]);
+			filteredNoise[1] += 0.12f * (filteredNoise[0] - filteredNoise[1]);
+			filteredNoise[2] += 0.12f * (filteredNoise[1] - filteredNoise[2]);
+			sample = static_cast<sint16>(filteredNoise[2]);
+		}
 	}
 	else
-	{
-		const sint32 micSampleCount = 32000 / 32;
-		sint16 micSampleData[micSampleCount];
+		for (auto& stage : filteredNoise)
+			stage = 0.0f;
 
-		auto controller = InputManager::instance().get_vpad_controller(drcIndex);
-		if( controller && controller->is_mic_active() )
+	if (mic_trace_enabled())
+	{
+		static uint32 frames = 0;
+		if (++frames % 333 == 0)
 		{
-			for(sint32 i=0; i<micSampleCount; i++)
-			{
-				micSampleData[i] = (sint16)(sin((float)GetTickCount()*0.1f+sin((float)GetTickCount()*0.0001f)*100.0f)*30000.0f);
-			}
+			double energy = 0.0;
+			for (const auto sample : micSampleData)
+				energy += static_cast<double>(sample) * sample;
+			cemuLog_log(LogType::Force, "[MIC trace] Feed blow={} rms={:.0f} statusCalls={} consumed={} read={} write={} size={}", blowPressed, sqrt(energy / MIC_SAMPLES_PER_3MS_32KHZ), micStatusCalls.load(), micConsumedSamples.load(), MICStatus.drc[0].readIndex, MICStatus.drc[0].writeIndex, MICStatus.drc[0].ringbufferSize);
 		}
-		else
-		{
-			memset(micSampleData, 0x00, sizeof(micSampleData));
-		}
-		mic_feedSamples(0, micSampleData, micSampleCount);
 	}
+	mic_feedSamples(0, micSampleData, MIC_SAMPLES_PER_3MS_32KHZ);
 }
 
 namespace mic

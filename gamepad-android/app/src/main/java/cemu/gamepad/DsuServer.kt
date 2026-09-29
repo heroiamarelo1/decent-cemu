@@ -16,6 +16,7 @@ data class MotionSnapshot(
 )
 
 class PadSample {
+    @Volatile var active = false
     @Volatile var motion = MotionSnapshot()
     @Volatile var buttons: Int = 0
     @Volatile var lx: Int = 128
@@ -111,18 +112,19 @@ class DsuServer(private val sample: PadSample) {
         buf.putInt(uid)
         buf.putInt(0x100001)
         buf.put(index.toByte())
-        buf.put(2)
+        buf.put(if (sample.active) 2 else 0)
         buf.put(2)
         buf.put(2)
         buf.put(byteArrayOf(0x02, 0x67, 0x60, 0x00, 0x00, 0x01))
         buf.put(5)
-        buf.put(1)
+        buf.put(if (sample.active) 1 else 0)
         stampCrc(packet, packet.size)
         return packet
     }
 
     private fun dataPacket(uid: Int): ByteArray {
-        val motion = sample.motion // one immutable sensor observation per datagram
+        val live = if (sample.active) sample else PadSample()
+        val motion = live.motion // one immutable sensor observation per datagram
         val body = 100
         val packet = ByteArray(body)
         val buf = ByteBuffer.wrap(packet).order(ByteOrder.LITTLE_ENDIAN)
@@ -133,23 +135,23 @@ class DsuServer(private val sample: PadSample) {
         buf.putInt(uid)
         buf.putInt(0x100002)
         buf.put(0)
-        buf.put(2)
+        buf.put(if (live.active) 2 else 0)
         buf.put(2)
         buf.put(2)
         buf.put(byteArrayOf(0x02, 0x67, 0x60, 0x00, 0x00, 0x01))
         buf.put(5)
-        buf.put(1)
+        buf.put(if (live.active) 1 else 0)
         packetIndex += 1
         buf.putInt(packetIndex)
-        val buttons = sample.buttons
+        val buttons = live.buttons
         buf.put((buttons and 0xFF).toByte())
         buf.put(((buttons shr 8) and 0xFF).toByte())
-        buf.put(if (sample.ps) 1 else 0)
+        buf.put(if (live.ps) 1 else 0)
         buf.put(0)
-        buf.put(sample.lx.toByte())
-        buf.put(sample.ly.toByte())
-        buf.put(sample.rx.toByte())
-        buf.put(sample.ry.toByte())
+        buf.put(live.lx.toByte())
+        buf.put(live.ly.toByte())
+        buf.put(live.rx.toByte())
+        buf.put(live.ry.toByte())
         buf.put(if (buttons and PadBits.LEFT != 0) 0xFF.toByte() else 0)
         buf.put(if (buttons and PadBits.DOWN != 0) 0xFF.toByte() else 0)
         buf.put(if (buttons and PadBits.RIGHT != 0) 0xFF.toByte() else 0)
@@ -162,10 +164,10 @@ class DsuServer(private val sample: PadSample) {
         buf.put(if (buttons and PadBits.L1 != 0) 0xFF.toByte() else 0)
         buf.put(if (buttons and PadBits.R2 != 0) 0xFF.toByte() else 0)
         buf.put(if (buttons and PadBits.L2 != 0) 0xFF.toByte() else 0)
-        buf.put(if (sample.touch) 1 else 0)
+        buf.put(if (live.touch) 1 else 0)
         buf.put(0)
-        buf.putShort(if (sample.touch) sample.touchX.coerceIn(0, 1919).toShort() else 0)
-        buf.putShort(if (sample.touch) sample.touchY.coerceIn(0, 941).toShort() else 0)
+        buf.putShort(if (live.touch) live.touchX.coerceIn(0, 1919).toShort() else 0)
+        buf.putShort(if (live.touch) live.touchY.coerceIn(0, 941).toShort() else 0)
         buf.put(0)
         buf.put(0)
         buf.putShort(0)
@@ -184,9 +186,9 @@ class DsuServer(private val sample: PadSample) {
         extra.putFloat(motion.magX)
         extra.putFloat(motion.magY)
         extra.putFloat(motion.magZ)
-        extra.put(if (sample.mic) 1 else 0)
-        extra.put(if (sample.screen) 1 else 0)
-        extra.put(sample.sensorBarCmd.toByte())
+        extra.put(if (live.mic) 1 else 0)
+        extra.put(if (live.screen) 1 else 0)
+        extra.put(live.sensorBarCmd.toByte())
         extra.put(motion.edgeDown.toByte())
         extra.put(byteArrayOf(68, 67, 77, 50)) // DCM2: coherent sensor contract
         extra.putInt(motion.sequence)

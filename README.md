@@ -7,7 +7,7 @@ This is a vibe-coded fork version of Cemu, build so you can have features the of
 ## What it has
 
 - Native Wii Remote, MotionPlus and Nunchuk support, with automatic setup (Dolphinbar recommended)
-- An Android app that acts as the GamePad, including gyroscope (beta — help is welcome), touchscreen and audio
+- An Android app that acts as the GamePad, including gyroscope, touchscreen and audio
 - A MotionPlus infrared simulator for a remote pointed at the floor (Minus + B turns it on and off)
 - Fixes for Wii Sports Club and Wii Party U. Launch them by right-clicking the game and choosing **Start (Compatibility Mode)**
 - Wiimote DSU compatible so you can use a phone a Wii Remote!
@@ -21,7 +21,7 @@ Connect a bluetooth controller to the phone and add it as a DSUController. Put b
 
 Connect the phone app's Video stream and Cemu now discovers and connects that
 phone as the GamePad automatically when no GamePad controller is connected.
-Android Back exits fullscreen. The two-finger gesture remains available too.
+
 
 This update also fixes microphone input for Nintendo Land's Donkey Kong blow
 section. Confirmed in hands-on testing.

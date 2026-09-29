@@ -2,8 +2,7 @@
 
 ![Nintendo Land](banner.png)
 
-This is a fork of [Cemu 2.6](https://github.com/cemu-project/Cemu).
-This is a vibe-coded version of Cemu, build so you can have features the official release just doesn't give you. AI contributions are welcome.
+This is a vibe-coded fork version of Cemu, build so you can have features the official release just doesn't give you. AI contributions are welcome.
 
 ## What it has
 
@@ -30,11 +29,6 @@ section. Confirmed in hands-on testing.
 Download the Cemu executable, `PadCapture.exe` and Android APK from the latest
 release. Put both Windows files in the same Cemu folder, then install the APK.
 The motion-axis fixes confirmed in 2.6.0.2 remain included.
-
-An experimental Donkey Kong horizontal guard is **not included**. If you tested
-it locally, leave `Donkey Kong horizontal guard` disabled in Graphic packs.
-Keep the GamePad upright while playing Donkey Kong; near-horizontal behavior
-still needs investigation.
 
 ## Android app
 

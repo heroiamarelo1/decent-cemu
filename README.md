@@ -7,11 +7,12 @@ This is a vibe-coded version of Cemu, build so you can have features the officia
 
 ## What it has
 
-- Native Wii Remote, MotionPlus and Nunchuk support, with automatic setup
+- Native Wii Remote, MotionPlus and Nunchuk support, with automatic setup (Dolphinbar recommended)
 - An Android app that acts as the GamePad, including gyroscope (beta — help is welcome), touchscreen and audio
 - A MotionPlus infrared simulator for a remote pointed at the floor (Minus + B turns it on and off)
 - Fixes for Wii Sports Club and Wii Party U. Launch them by right-clicking the game and choosing **Start (Compatibility Mode)**
-
+- Wiimote DSU compatible so you can use a phone a Wii Remote!
+- 
 The phone and the PC have to be on the same network. In Cemu, **Gamepad on Android**
 Connect a bluetooth controller to the phone and add it as a DSUController. Put both IPs on both places and enjoy the ride.
 

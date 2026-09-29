@@ -217,6 +217,10 @@ target_link_libraries(CemuBin PRIVATE
 	CemuUtil
 )
 
+if(WIN32)
+	add_dependencies(CemuBin PadStream)
+endif()
+
 if(UNIX AND NOT APPLE)
 	# due to nasm output some linkers will make stack executable
 	# cemu does not require this so we explicity disable it

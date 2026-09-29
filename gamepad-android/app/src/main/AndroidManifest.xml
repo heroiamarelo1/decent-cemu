@@ -10,7 +10,7 @@
         android:allowBackup="false"
         android:enableOnBackInvokedCallback="true"
         android:icon="@drawable/ic_launcher"
-        android:label="Decent Cemu Controller"
+        android:label="Decent Cemu Stream"
         android:theme="@style/Theme.AppCompat.NoActionBar"
         android:usesCleartextTraffic="true">
         <activity

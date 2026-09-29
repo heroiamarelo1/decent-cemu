@@ -1,4 +1,5 @@
 #include "input/api/DSU/DSUControllerProvider.h"
+#include "input/api/DSU/PadStreamControl.h"
 
 #include <atomic>
 #include <cstring>
@@ -282,7 +283,7 @@ void DSUControllerProvider::reader_thread()
 		ServerMessage* msg;
 		//try
 		//{
-		std::array<char, 128> recv_buf; // NOLINT(cppcoreguidelines-pro-type-member-init, hicpp-member-init)
+		std::array<char, 256> recv_buf; // NOLINT(cppcoreguidelines-pro-type-member-init, hicpp-member-init)
 		boost::asio::ip::udp::endpoint sender_endpoint;
 		boost::system::error_code ec{};
 		const size_t len = m_socket.receive_from(boost::asio::buffer(recv_buf), sender_endpoint, 0, ec);
@@ -403,6 +404,8 @@ void DSUControllerProvider::reader_thread()
                     std::memcmp(recv_buf.data()+sizeof(DataResponse)+16, "DCM2", 4)==0;
                 if (m_state[index].coherent_motion)
                     std::memcpy(&m_state[index].sensor_sequence, recv_buf.data()+sizeof(DataResponse)+20, 4);
+                if (len >= sizeof(DataResponse) + 25)
+                    PadStream_NotePreset(static_cast<uint8>(recv_buf[sizeof(DataResponse) + 24]));
                 m_state[index].has_magnet = false;
 				m_state[index].mic_down = false;
 				m_state[index].screen_down = false;

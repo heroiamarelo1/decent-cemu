@@ -25,6 +25,9 @@ class PadImageView(context: Context, attrs: AttributeSet?) : View(context, attrs
     var onShowControls: (() -> Unit)? = null
     enum class IrMode { OFF, CONTRAST, POINTS }
 
+    var showStream = false
+    var streamWidth = 854
+    var streamHeight = 480
     var irMode: IrMode = IrMode.OFF
         set(value) {
             field = value
@@ -48,7 +51,8 @@ class PadImageView(context: Context, attrs: AttributeSet?) : View(context, attrs
     })
 
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(Color.BLACK)
+        if (!showStream)
+            canvas.drawColor(Color.BLACK)
         val frame = bitmap
         updateImageRect()
         val viewW = width.toFloat()
@@ -73,8 +77,16 @@ class PadImageView(context: Context, attrs: AttributeSet?) : View(context, attrs
         val viewW = width.toFloat()
         val viewH = height.toFloat()
         if (viewW <= 0f || viewH <= 0f) { image.setEmpty(); return }
-        val frameW = if (frame != null && !frame.isRecycled) frame.width.toFloat() else 854f
-        val frameH = if (frame != null && !frame.isRecycled) frame.height.toFloat() else 480f
+        val frameW = when {
+            showStream && streamWidth > 0 -> streamWidth.toFloat()
+            frame != null && !frame.isRecycled -> frame.width.toFloat()
+            else -> 854f
+        }
+        val frameH = when {
+            showStream && streamHeight > 0 -> streamHeight.toFloat()
+            frame != null && !frame.isRecycled -> frame.height.toFloat()
+            else -> 480f
+        }
         val scale = minOf(viewW / frameW, viewH / frameH)
         val w = frameW * scale
         val h = frameH * scale
@@ -103,7 +115,7 @@ class PadImageView(context: Context, attrs: AttributeSet?) : View(context, attrs
         // The drawing and input paths share this calculation, including after an FS resize.
         updateImageRect()
         val down = action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL
-        if (image.isEmpty || bitmap == null || !image.contains(event.x, event.y)) {
+        if (image.isEmpty || !image.contains(event.x, event.y)) {
             cancelPadTouch() // Letterbox borders do not become taps on a game edge.
             return true
         }

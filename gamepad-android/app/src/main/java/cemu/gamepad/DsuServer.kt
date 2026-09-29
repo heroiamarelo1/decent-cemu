@@ -31,6 +31,8 @@ class PadSample {
     @Volatile var screen: Boolean = false
     // 0 leaves the emulator option alone. 1 turns it off, 2 turns it on.
     @Volatile var sensorBarCmd: Int = 0
+    // 0 native 854x480, 1 720p, 2 1080p. Same 854:480 shape.
+    @Volatile var streamPreset: Int = 0
     // Which screen edge gravity pulls toward: 0 unknown, 1 right, 2 left, 3 top, 4 bottom, 5 screen, 6 back.
 }
 
@@ -58,10 +60,15 @@ class DsuServer(private val sample: PadSample) {
     private var socket: DatagramSocket? = null
     private var packetIndex = 0
 
-    fun start() {
-        if (running) return
+    fun start(): Boolean {
+        if (running) return true
+        val opened = try {
+            DatagramSocket(26760)
+        } catch (_: Exception) {
+            return false
+        }
         running = true
-        socket = DatagramSocket(26760)
+        socket = opened
         thread(name = "dsu") {
             val buffer = ByteArray(256)
             while (running) {
@@ -75,6 +82,7 @@ class DsuServer(private val sample: PadSample) {
                 }
             }
         }
+        return true
     }
 
     fun stop() {
@@ -180,9 +188,9 @@ class DsuServer(private val sample: PadSample) {
         buf.putFloat(motion.gyroY)
         buf.putFloat(motion.gyroZ)
         stampCrc(packet, body)
-        val out = ByteArray(body + 24)
+        val out = ByteArray(body + 25)
         packet.copyInto(out)
-        val extra = ByteBuffer.wrap(out, body, 24).order(ByteOrder.LITTLE_ENDIAN)
+        val extra = ByteBuffer.wrap(out, body, 25).order(ByteOrder.LITTLE_ENDIAN)
         extra.putFloat(motion.magX)
         extra.putFloat(motion.magY)
         extra.putFloat(motion.magZ)
@@ -192,6 +200,7 @@ class DsuServer(private val sample: PadSample) {
         extra.put(motion.edgeDown.toByte())
         extra.put(byteArrayOf(68, 67, 77, 50)) // DCM2: coherent sensor contract
         extra.putInt(motion.sequence)
+        extra.put(sample.streamPreset.coerceIn(0, 2).toByte())
         return out
     }
 

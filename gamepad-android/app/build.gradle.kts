@@ -7,11 +7,11 @@ android {
     namespace = "cemu.gamepad"
     compileSdk = 34
     defaultConfig {
-        applicationId = "cemu.gamepad"
+        applicationId = "cemu.gamepad.stream"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.2.1-back"
+        versionCode = 5
+        versionName = "1.3-stream"
     }
     buildTypes {
         release {

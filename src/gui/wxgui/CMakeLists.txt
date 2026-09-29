@@ -204,4 +204,8 @@ endif ()
 if(WIN32)
 	add_executable(PadCapture PadCapture.cpp)
 	target_compile_features(PadCapture PRIVATE cxx_std_20)
+	add_executable(PadStream PadStream.cpp)
+	target_compile_features(PadStream PRIVATE cxx_std_20)
+	set_target_properties(PadStream PROPERTIES
+		RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../../../bin/$<1:>")
 endif()

@@ -1,10 +1,16 @@
 package cemu.gamepad
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.media.MediaCodec
+import android.media.MediaFormat
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.graphics.SurfaceTexture
+import android.view.TextureView
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -21,6 +27,7 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.view.Gravity
 import android.view.Surface
 import android.widget.Button
 import android.widget.EditText
@@ -46,7 +53,11 @@ class MainActivity : Activity(), SensorEventListener {
     private val server = DsuServer(sample)
     private lateinit var sensors: SensorManager
     private lateinit var image: PadImageView
+    private lateinit var videoView: TextureView
     private lateinit var status: TextView
+    @Volatile private var videoSurface: Surface? = null
+    @Volatile private var streamW = 854
+    @Volatile private var streamH = 480
     private val axes = PadAxes()
     private var calibrating = false
     private var sensorBarOn = false
@@ -88,6 +99,27 @@ class MainActivity : Activity(), SensorEventListener {
                 handleBackPressed()
             }
         image = findViewById(R.id.pad)
+        val stage = findViewById<android.widget.FrameLayout>(R.id.stage)
+        videoView = TextureView(this)
+        stage.addView(videoView, 0, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
+        stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (image.showStream) fitVideo()
+        }
+        videoView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                videoSurface = Surface(surface)
+                fitVideo()
+            }
+            override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) { fitVideo() }
+            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                videoSurface = null
+                return true
+            }
+            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+        }
+        sample.streamPreset = getSharedPreferences("pad_connect", Context.MODE_PRIVATE).getInt("stream_preset", 0).coerceIn(0, 2)
         status = findViewById(R.id.status)
         status.text = "Enter the PC IP to connect video and audio."
         wifiStatus = findViewById(R.id.wifi_status)
@@ -96,8 +128,12 @@ class MainActivity : Activity(), SensorEventListener {
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .build()
-        connectivity.registerNetworkCallback(wifiRequest, wifiCallback)
-        watchingWifi = true
+        try {
+            connectivity.registerNetworkCallback(wifiRequest, wifiCallback)
+            watchingWifi = true
+        } catch (_: Exception) {
+            watchingWifi = false
+        }
         refreshWifiAddress()
         image.onPadTouch = { down, x, y ->
             sample.touch = down
@@ -109,9 +145,18 @@ class MainActivity : Activity(), SensorEventListener {
         findViewById<Button>(R.id.connect).setOnClickListener {
             startStream(pcIp.text.toString().trim())
         }
-        holdButton(R.id.home) { sample.ps = it }
-        holdButton(R.id.tv) { sample.screen = it }
         holdButton(R.id.mic) { sample.mic = it }
+        findViewById<Button>(R.id.settings).setOnClickListener {
+            val labels = arrayOf("Native", "720p", "1080p")
+            AlertDialog.Builder(this)
+                .setTitle("Picture")
+                .setSingleChoiceItems(labels, sample.streamPreset) { dialog, which ->
+                    sample.streamPreset = which
+                    getSharedPreferences("pad_connect", Context.MODE_PRIVATE).edit().putInt("stream_preset", which).apply()
+                    dialog.dismiss()
+                }
+                .show()
+        }
         val controls = findViewById<android.view.View>(R.id.controls)
         val back = findViewById<Button>(R.id.back)
         findViewById<Button>(R.id.ir).setOnClickListener { setIrMode(PadImageView.IrMode.CONTRAST, controls, back) }
@@ -141,7 +186,8 @@ class MainActivity : Activity(), SensorEventListener {
         axes.load(prefs)
         if (axes.ready)
             lockPlayOrientation(if (prefs.contains("rotation")) prefs.getInt("rotation", Surface.ROTATION_90) else displayRotation())
-        server.start()
+        if (!server.start())
+            status.text = "Close the other controller app. It is using the controller port."
     }
 
     @Deprecated("Legacy Android Back callback")
@@ -421,6 +467,56 @@ class MainActivity : Activity(), SensorEventListener {
         return ((value + 1f) * 0.5f * 255f).roundToInt().coerceIn(0, 255)
     }
 
+    private fun fitVideo() {
+        val stage = videoView.parent as? android.view.View ?: return
+        val stageW = stage.width
+        val stageH = stage.height
+        if (stageW <= 0 || stageH <= 0 || streamW <= 0 || streamH <= 0) return
+        val scale = kotlin.math.min(stageW.toFloat() / streamW, stageH.toFloat() / streamH)
+        val w = (streamW * scale).toInt().coerceAtLeast(2)
+        val h = (streamH * scale).toInt().coerceAtLeast(2)
+        videoView.setTransform(Matrix())
+        videoView.surfaceTexture?.setDefaultBufferSize(streamW, streamH)
+        val params = videoView.layoutParams as? android.widget.FrameLayout.LayoutParams
+        if (params == null || params.width != w || params.height != h || params.gravity != Gravity.CENTER)
+            videoView.layoutParams = android.widget.FrameLayout.LayoutParams(w, h, Gravity.CENTER)
+    }
+
+    private fun nalType(nal: ByteArray): Int {
+        var i = 0
+        if (nal.size >= 4 && nal[0] == 0.toByte() && nal[1] == 0.toByte() && nal[2] == 0.toByte() && nal[3] == 1.toByte())
+            i = 4
+        else if (nal.size >= 3 && nal[0] == 0.toByte() && nal[1] == 0.toByte() && nal[2] == 1.toByte())
+            i = 3
+        if (i >= nal.size) return -1
+        return nal[i].toInt() and 0x1F
+    }
+
+    private fun splitNals(packet: ByteArray, offset: Int): List<ByteArray> {
+        val starts = ArrayList<Int>()
+        var i = offset
+        while (i + 3 < packet.size) {
+            val four = packet[i] == 0.toByte() && packet[i + 1] == 0.toByte() && packet[i + 2] == 0.toByte() && packet[i + 3] == 1.toByte()
+            val three = packet[i] == 0.toByte() && packet[i + 1] == 0.toByte() && packet[i + 2] == 1.toByte()
+            if (four) {
+                starts.add(i)
+                i += 4
+                continue
+            }
+            if (three) {
+                starts.add(i)
+                i += 3
+                continue
+            }
+            i++
+        }
+        if (starts.isEmpty()) return emptyList()
+        return starts.indices.map { index ->
+            val end = if (index + 1 < starts.size) starts[index + 1] else packet.size
+            packet.copyOfRange(starts[index], end)
+        }
+    }
+
     private fun startStream(ip: String) {
         if (ip.isEmpty()) return
         getSharedPreferences("pad_connect", Context.MODE_PRIVATE).edit().putString("pc_ip", ip).apply()
@@ -440,26 +536,111 @@ class MainActivity : Activity(), SensorEventListener {
                     videoSocket = socket
                 }
                 socket.connect(InetSocketAddress(ip, 26761), 4000)
+                socket.tcpNoDelay = true
                 val input = socket.getInputStream()
                 val header = ByteArray(4)
                 var shown = false
+                var codec: MediaCodec? = null
+                var sps: ByteArray? = null
+                var pps: ByteArray? = null
+                var videoStamp = 0L
                 while (generation == streamGeneration) {
                     if (!readFully(input, header)) break
                     val size = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).int
-                    if (size <= 0 || size > 2_000_000) break
-                    val jpeg = ByteArray(size)
-                    if (!readFully(input, jpeg)) break
-                    val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: continue
-                    runOnUiThread {
-                        if (generation == streamGeneration && foreground) {
-                            image.bitmap = bitmap
-                            if (!shown) {
+                    if (size <= 0 || size > 4_000_000) break
+                    val packet = ByteArray(size)
+                    if (!readFully(input, packet)) break
+                    if (packet.size >= 2 && packet[0] == 0xFF.toByte() && packet[1] == 0xD8.toByte()) {
+                        val bmp = BitmapFactory.decodeByteArray(packet, 0, packet.size) ?: continue
+                        val first = !shown
+                        shown = true
+                        runOnUiThread {
+                            if (generation != streamGeneration || !foreground) return@runOnUiThread
+                            videoView.visibility = android.view.View.GONE
+                            image.showStream = false
+                            image.bitmap = bmp
+                            if (first)
                                 status.text = if (audioConnected) "Video and audio connected" else "Video connected"
-                                shown = true
+                        }
+                        continue
+                    }
+                    when (packet[0].toInt() and 0xFF) {
+                        0 -> if (packet.size >= 5) {
+                            val width = ((packet[1].toInt() and 0xFF) shl 8) or (packet[2].toInt() and 0xFF)
+                            val height = ((packet[3].toInt() and 0xFF) shl 8) or (packet[4].toInt() and 0xFF)
+                            if (width > 0 && height > 0) {
+                                streamW = width
+                                streamH = height
+                                codec?.stop(); codec?.release(); codec = null
+                                sps = null; pps = null
+                                runOnUiThread {
+                                    videoView.visibility = android.view.View.VISIBLE
+                                    image.bitmap = null
+                                    image.showStream = true
+                                    image.streamWidth = width
+                                    image.streamHeight = height
+                                    image.invalidate()
+                                    fitVideo()
+                                }
                             }
-                        } else bitmap.recycle()
+                        }
+                        1 -> {
+                            val nals = splitNals(packet, 1)
+                            sps = nals.firstOrNull { nalType(it) == 7 }
+                            pps = nals.firstOrNull { nalType(it) == 8 }
+                        }
+                        2 -> {
+                            val nals = splitNals(packet, 1)
+                            nals.firstOrNull { nalType(it) == 7 }?.let { sps = it }
+                            nals.firstOrNull { nalType(it) == 8 }?.let { pps = it }
+                            val surface = videoSurface
+                            if (codec == null && surface != null && sps != null && pps != null) {
+                                try {
+                                    val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, streamW, streamH)
+                                    format.setByteBuffer("csd-0", ByteBuffer.wrap(sps))
+                                    format.setByteBuffer("csd-1", ByteBuffer.wrap(pps))
+                                    format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, packet.size.coerceAtLeast(256 * 1024))
+                                    codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                                    codec.configure(format, surface, null, 0)
+                                    codec.start()
+                                } catch (ex: Exception) {
+                                    try { codec?.release() } catch (_: Exception) {}
+                                    codec = null
+                                    runOnUiThread {
+                                        if (generation == streamGeneration && foreground)
+                                            status.text = ex.message ?: "Video decoder failed"
+                                    }
+                                }
+                            }
+                            val active = codec ?: continue
+                            val index = active.dequeueInputBuffer(8000)
+                            if (index >= 0) {
+                                val buf = active.getInputBuffer(index) ?: continue
+                                buf.clear()
+                                val copy = packet.copyOfRange(1, packet.size)
+                                if (copy.size > buf.capacity()) continue
+                                buf.put(copy)
+                                videoStamp += 33333L
+                                active.queueInputBuffer(index, 0, copy.size, videoStamp, 0)
+                            }
+                            val info = android.media.MediaCodec.BufferInfo()
+                            while (true) {
+                                val out = active.dequeueOutputBuffer(info, 0)
+                                if (out < 0) break
+                                active.releaseOutputBuffer(out, true)
+                            }
+                            if (!shown) {
+                                shown = true
+                                runOnUiThread {
+                                    if (generation == streamGeneration && foreground)
+                                        status.text = if (audioConnected) "Video and audio connected" else "Video connected"
+                                }
+                            }
+                        }
                     }
                 }
+                try { codec?.stop() } catch (_: Exception) {}
+                try { codec?.release() } catch (_: Exception) {}
             } catch (ex: Exception) {
                 runOnUiThread {
                     if (generation == streamGeneration && foreground)

@@ -189,8 +189,65 @@ void PadViewFrame::PlaceAsNormalWindow()
 	SetPosition(wxPoint(
 		work.GetLeft() + (work.GetWidth() - frame.GetWidth()) / 2,
 		work.GetTop() + (work.GetHeight() - frame.GetHeight()) / 2));
+#if BOOST_OS_WINDOWS
+	if (HWND hwnd = GetHWND())
+	{
+		LONG ex = ::GetWindowLongW(hwnd, GWL_EXSTYLE);
+		ex = (ex & ~(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) | WS_EX_APPWINDOW;
+		::SetWindowLongW(hwnd, GWL_EXSTYLE, ex);
+	}
+#endif
 	Show(true);
 	Raise();
+}
+
+void PadViewFrame::PlaceForStream(int clientWidth, int clientHeight)
+{
+	if (clientWidth < 320 || clientHeight < 180)
+		return;
+	if (!GetConfig().gamepad_on_android.GetValue())
+		return;
+	// Keep the saved on-screen layout. Render a borderless window outside the desktop.
+	m_streamPlacement = true;
+	m_preservePlacement = true;
+
+	if (IsFullScreen())
+		ShowFullScreen(false);
+#if BOOST_OS_WINDOWS
+	HWND hwnd = GetHWND();
+	if (!hwnd)
+		return;
+	LONG style = ::GetWindowLongW(hwnd, GWL_STYLE);
+	style &= ~(WS_CAPTION | WS_THICKFRAME | WS_BORDER | WS_DLGFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX);
+	style |= WS_POPUP;
+	::SetWindowLongW(hwnd, GWL_STYLE, style);
+	LONG ex = ::GetWindowLongW(hwnd, GWL_EXSTYLE);
+	ex = (ex | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW;
+	::SetWindowLongW(hwnd, GWL_EXSTYLE, ex);
+	const int x = ::GetSystemMetrics(SM_XVIRTUALSCREEN) - clientWidth - 80;
+	const int y = ::GetSystemMetrics(SM_YVIRTUALSCREEN) - clientHeight - 80;
+	WINDOWPLACEMENT place{};
+	place.length = sizeof(place);
+	::GetWindowPlacement(hwnd, &place);
+	place.flags = 0;
+	place.showCmd = SW_SHOWNOACTIVATE;
+	place.rcNormalPosition.left = x;
+	place.rcNormalPosition.top = y;
+	place.rcNormalPosition.right = x + clientWidth;
+	place.rcNormalPosition.bottom = y + clientHeight;
+	::SetWindowPlacement(hwnd, &place);
+	Layout();
+	SendSizeEvent();
+	::SetWindowPos(hwnd, HWND_BOTTOM, x, y, clientWidth, clientHeight,
+		SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+#else
+	if (IsMaximized())
+		Maximize(false);
+	SetClientSize(clientWidth, clientHeight);
+	Show(false);
+	Layout();
+	SendSizeEvent();
+#endif
 }
 
 bool PadViewFrame::Initialize()
@@ -251,12 +308,13 @@ void PadViewFrame::DestroyCanvas()
 
 void PadViewFrame::OnSizeEvent(wxSizeEvent& event)
 {
-	if (!m_preservePlacement && !IsMaximized() && !IsFullScreen())
+	if (!m_streamPlacement && !m_preservePlacement && !IsMaximized() && !IsFullScreen())
 	{
 		g_window_info.restored_pad_width = GetSize().x;
 		g_window_info.restored_pad_height = GetSize().y;
 	}
-	g_window_info.pad_maximized = IsMaximized() && !IsFullScreen();
+	if (!m_streamPlacement)
+		g_window_info.pad_maximized = IsMaximized() && !IsFullScreen();
 
 	const wxSize client_size = GetClientSize();
 	g_window_info.pad_width = client_size.GetWidth();
@@ -281,7 +339,7 @@ void PadViewFrame::OnDPIChangedEvent(wxDPIChangedEvent& event)
 
 void PadViewFrame::OnMoveEvent(wxMoveEvent& event)
 {
-	if (!m_preservePlacement && !IsMaximized() && !IsFullScreen())
+	if (!m_streamPlacement && !m_preservePlacement && !IsMaximized() && !IsFullScreen())
 	{
 		g_window_info.restored_pad_x = GetPosition().x;
 		g_window_info.restored_pad_y = GetPosition().y;

@@ -25,6 +25,7 @@
 #include "wxHelper.h"
 #include "helpers/wxHelpers.h"
 #include "PadViewFrame.h"
+#include "input/api/DSU/PadStreamControl.h"
 #include "GamePadViewStream.h"
 #include "input/api/DSU/DSUController.h"
 
@@ -913,10 +914,7 @@ void MainWindow::TogglePadView()
 		// Android keeps the large second-monitor window. Off, it is a normal window
 		// on this screen and does not replace that saved placement.
 		if (GetConfig().gamepad_on_android.GetValue())
-		{
-			m_padView->PlaceOnSecondMonitor();
-			m_padView->Show(true);
-		}
+			m_padView->PlaceForStream(854, 480);
 		else
 			m_padView->PlaceAsNormalWindow();
 
@@ -1075,10 +1073,7 @@ void MainWindow::OnOptionsInput(wxCommandEvent& event)
 		if (m_padView)
 		{
 			if (GetConfig().gamepad_on_android.GetValue())
-			{
-				m_padView->PlaceOnSecondMonitor();
-				m_padView->Show(true);
-			}
+				m_padView->PlaceForStream(854, 480);
 			else
 				m_padView->PlaceAsNormalWindow();
 		}
@@ -2051,6 +2046,10 @@ bool MainWindow::IsMenuHidden() const
 
 void MainWindow::OnTimer(wxTimerEvent& event)
 {
+	int streamWidth = 0;
+	int streamHeight = 0;
+	if (m_padView && PadStream_TakeSize(streamWidth, streamHeight))
+		m_padView->PlaceForStream(streamWidth, streamHeight);
 	if(m_update_available.valid() && future_is_ready(m_update_available))
 	{
 		if(m_update_available.get())

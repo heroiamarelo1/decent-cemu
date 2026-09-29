@@ -19,6 +19,8 @@ public:
 	void PlaceOnSecondMonitor();
 	// A normal GamePad window on the primary screen. Does not overwrite the Android placement.
 	void PlaceAsNormalWindow();
+	// With Gamepad on Android, keep this size off-screen. Does not save over the stored placement.
+	void PlaceForStream(int clientWidth, int clientHeight);
 	void InitializeRenderCanvas();
 	void DestroyCanvas();
 
@@ -41,4 +43,5 @@ private:
 	wxWindow* m_render_canvas = nullptr;
 	// While set, moving this window does not replace the saved Android placement.
 	bool m_preservePlacement = false;
+	bool m_streamPlacement = false;
 };

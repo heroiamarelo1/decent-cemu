@@ -26,7 +26,7 @@ phone as the GamePad automatically when no GamePad controller is connected.
 This update also fixes microphone input for Nintendo Land's Donkey Kong blow
 section. Confirmed in hands-on testing.
 
-Download the Cemu executable, `PadCapture.exe` and Android APK from the latest
+Download the Cemu executable, `PadStream.exe` and Android APK from the latest
 release. Put both Windows files in the same Cemu folder, then install the APK.
 The motion-axis fixes confirmed in 2.6.0.2 remain included.
 

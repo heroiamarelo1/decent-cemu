@@ -9,8 +9,8 @@ Decent Cemu 2.6.0.3 is a fork of Cemu 2.6, not an official Cemu release.
 
 ## Install
 
-1. Close Cemu and back up your existing executable and `PadCapture.exe`.
-2. Put `Decent.Cemu.2.6.0.3.exe` and the attached `PadCapture.exe` in the same Cemu folder. For RetroBat, rename the Cemu executable to `Cemu.exe`.
+1. Close Cemu and back up your existing executable and `PadStream.exe`.
+2. Put `Decent.Cemu.2.6.0.3.exe` and the attached `PadStream.exe` in the same Cemu folder. For RetroBat, rename the Cemu executable to `Cemu.exe`.
 3. Keep your existing settings, controller profiles, keys, games and saves.
 4. Install the attached `Decent.Cemu.Controller.apk` on the phone.
 5. Connect the phone and PC to the same WiFi network. Open the app, enter the PC's WiFi IP if needed, then press **Video**. Cemu will connect its GamePad input automatically when no other GamePad controller is connected.

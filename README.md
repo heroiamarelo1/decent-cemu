@@ -16,7 +16,7 @@ This is a vibe-coded version of Cemu, build so you can have features the officia
 The phone and the PC have to be on the same network. In Cemu, **Gamepad on Android**
 Connect a bluetooth controller to the phone and add it as a DSUController. Put both IPs on both places and enjoy the ride.
 
-## Android motion update — 2.6.0.2
+## Android motion update â€” 2.6.0.2
 
 [Download the latest release](https://github.com/heroiamarelo1/decent-cemu/releases/latest).
 

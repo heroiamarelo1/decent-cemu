@@ -38,6 +38,4 @@ The Cemu code stays under the original [Mozilla Public License 2.0](LICENSE.txt)
 
 This was vibe-coded. I do not morally authorize the official development team to use my code, because of their anti-artificial-intelligence policy, and because the Discord mod is an idiot who is going to stay single for the rest of his life.
 
-## Build
-
-See [BUILD.md](BUILD.md).
+Talk to me on Discord! It's HeroiAmarelo

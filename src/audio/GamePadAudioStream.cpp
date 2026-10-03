@@ -18,7 +18,8 @@ std::once_flag g_started;
 
 #if BOOST_OS_WINDOWS
 constexpr int kPort = 26762;
-constexpr int kMaxFrames = 4800;
+// Keep only a short amount of PCM queued while the phone is catching up.
+constexpr int kMaxFrames = 1920;
 
 std::mutex g_mutex;
 std::vector<int16_t> g_pending;

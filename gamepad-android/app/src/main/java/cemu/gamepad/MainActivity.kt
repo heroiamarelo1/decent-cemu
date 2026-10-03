@@ -779,7 +779,8 @@ class MainActivity : Activity(), SensorEventListener {
                 val channel = AudioFormat.CHANNEL_OUT_STEREO
                 val encoding = AudioFormat.ENCODING_PCM_16BIT
                 val min = AudioTrack.getMinBufferSize(rate, channel, encoding).coerceAtLeast(4096)
-                val bufferBytes = (rate * 4 / 5).coerceAtLeast(min * 4)
+                // Keep the queued audio short so it stays close to the GamePad video.
+                val bufferBytes = (rate * 4 * 60 / 1000).coerceAtLeast(min)
                 track = AudioTrack.Builder()
                     .setAudioAttributes(
                         AudioAttributes.Builder()
@@ -796,6 +797,7 @@ class MainActivity : Activity(), SensorEventListener {
                     )
                     .setBufferSizeInBytes(bufferBytes)
                     .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                     .build()
                 val playing = track ?: return@thread
                 playing.play()

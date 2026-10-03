@@ -1056,11 +1056,27 @@ void vpadExport_VPADSetGyroDirection(PPCInterpreter_t* hCPU)
 	if (channel < VPAD_MAX_CONTROLLERS)
 	{
 		g_vpadGyroDirOverwrite[channel] = *dir;
+        glm::vec3 acceleration{};
+        bool haveAcceleration = false;
+        if (const auto controller = InputManager::instance().get_vpad_controller(channel))
+        {
+            if (controller->has_motion())
+            {
+                float sample[3]{};
+                controller->get_motion_data().getVPADAccelerometer(sample);
+                acceleration = {sample[0], sample[1], sample[2]};
+                haveAcceleration = true;
+            }
+        }
         std::lock_guard lock(s_motionReferenceMutex);
         const bool accepted = s_motionReference[channel].setDirection({
             {float(dir->x.x), float(dir->x.y), float(dir->x.z)},
             {float(dir->y.x), float(dir->y.y), float(dir->y.z)},
-            {float(dir->z.x), float(dir->z.y), float(dir->z.z)}});
+            {float(dir->z.x), float(dir->z.y), float(dir->z.z)}},
+            acceleration, haveAcceleration);
+        if (!accepted)
+            cemuLog_log(LogType::Force, "VPADSetGyroDirection({}) kept the current pose; accelerometer {:.2f},{:.2f},{:.2f} does not match",
+                channel, acceleration.x, acceleration.y, acceleration.z);
         motion_trace::write("api", "SetGyroDirection,%u,%d", channel, int(accepted));
         motion_trace::values("SetGyroDirection", channel, hCPU->instructionPointer, hCPU->spr.LR, {
             float(dir->x.x),float(dir->x.y),float(dir->x.z),float(dir->y.x),float(dir->y.y),float(dir->y.z),float(dir->z.x),float(dir->z.y),float(dir->z.z)});

@@ -66,9 +66,16 @@ inline bool isRotation(const glm::mat3& matrix)
 class Reference
 {
 public:
-    bool setDirection(const glm::mat3& requested)
+    // acceleration is the current VPAD accelerometer, in g. When it is a real
+    // gravity reading and does not match the pose the game is declaring, the
+    // call is ignored. Nintendo Land asks for the flat pose again on minigame
+    // entry; honouring that while the pad is in the player's hand relabels
+    // the held pose as position 0. A pad with no accelerometer still rebases.
+    bool setDirection(const glm::mat3& requested, const glm::vec3& acceleration, bool haveAcceleration)
     {
         if (!isRotation(requested)) return false;
+        if (haveAcceleration && !declaredPoseMatchesGravity(requested, acceleration))
+            return false;
         m_requested = glm::mat3_cast(glm::normalize(glm::quat_cast(requested)));
         m_pending = true;
         if (m_hasRaw) rebase();
@@ -110,6 +117,23 @@ public:
     }
 
 private:
+    // Identity is the flat, screen-up pose, whose accelerometer is (0, -1, 0).
+    // For any declared direction the same world-up gives -(column y components).
+    static bool declaredPoseMatchesGravity(const glm::mat3& requested, const glm::vec3& acceleration)
+    {
+        const float magnitude = glm::length(acceleration);
+        if (!std::isfinite(magnitude) || magnitude < 0.2f)
+            return true;
+        if (magnitude < 0.75f || magnitude > 1.25f)
+            return false;
+        const glm::vec3 expected(-requested[0].y, -requested[1].y, -requested[2].y);
+        const float expectedLength = glm::length(expected);
+        if (expectedLength < 0.5f)
+            return false;
+        const float agreement = glm::dot(acceleration / magnitude, expected / expectedLength);
+        return agreement > 0.85f;
+    }
+
     void rebase()
     {
         m_reference = m_requested * glm::transpose(m_raw);

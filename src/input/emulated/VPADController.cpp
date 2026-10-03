@@ -11,11 +11,6 @@
 
 #include <cmath>
 #include <chrono>
-#include <cstdio>
-#if defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#endif
 
 enum ControllerVPADMapping2 : uint32
 {
@@ -253,80 +248,6 @@ void VPADController::update_touch(VPADStatus_t& status)
 	status.tpProcessed2 = status.tpData;
 }
 
-static void WriteMotionDebug(MotionSample& sample, const VPADStatus_t& status, bool held)
-{
-#if defined(_WIN32)
-	using clock = std::chrono::steady_clock;
-	static clock::time_point last{};
-	const auto now = clock::now();
-	if (now - last < std::chrono::milliseconds(100))
-		return;
-	last = now;
-
-	wchar_t path[MAX_PATH]{};
-	if (GetModuleFileNameW(nullptr, path, MAX_PATH) == 0)
-		return;
-	wchar_t* slash = wcsrchr(path, L'\\');
-	if (!slash)
-		return;
-	*(slash + 1) = 0;
-	if (wcslen(path) + 24 >= MAX_PATH)
-		return;
-	wcscat_s(path, L"gamepad-motion.txt");
-
-	float acc[3]{};
-	float gyro[3]{};
-	sample.getAccelerometer(acc);
-	sample.getGyrometer(gyro);
-	const float ax = std::fabs(acc[0]);
-	const float ay = std::fabs(acc[1]);
-	const float az = std::fabs(acc[2]);
-	const char* axis = "X";
-	float dominant = acc[0];
-	if (ay > ax && ay >= az)
-	{
-		axis = "Y";
-		dominant = acc[1];
-	}
-	else if (az > ax && az > ay)
-	{
-		axis = "Z";
-		dominant = acc[2];
-	}
-	FILE* file = nullptr;
-	if (_wfopen_s(&file, path, L"w") != 0 || !file)
-		return;
-	std::fprintf(file,
-		"gravity %c%s\n"
-		"fusion_acc %.3f %.3f %.3f\n"
-		"fusion_gyro_dps %.2f %.2f %.2f\n"
-		"game_acc %.3f %.3f %.3f\n"
-		"game_gyro %.4f %.4f %.4f\n"
-		"orient %.3f %.3f %.3f\n"
-		"dir_x %.3f %.3f %.3f\n"
-		"dir_y %.3f %.3f %.3f\n"
-		"dir_z %.3f %.3f %.3f\n"
-		"hold %d\n"
-		"phone_edge %s\n",
-		dominant < 0.0f ? '-' : '+', axis,
-		acc[0], acc[1], acc[2],
-		gyro[0] * 57.2958f, gyro[1] * 57.2958f, gyro[2] * 57.2958f,
-		(float)status.acc.x, (float)status.acc.y, (float)status.acc.z,
-		(float)status.gyroChange.x, (float)status.gyroChange.y, (float)status.gyroChange.z,
-		(float)status.gyroOrientation.x, (float)status.gyroOrientation.y, (float)status.gyroOrientation.z,
-		(float)status.dir.x.x, (float)status.dir.x.y, (float)status.dir.x.z,
-		(float)status.dir.y.x, (float)status.dir.y.y, (float)status.dir.y.z,
-		(float)status.dir.z.x, (float)status.dir.z.y, (float)status.dir.z.z,
-		held ? 1 : 0,
-		AndroidPadEdgeName());
-	std::fclose(file);
-#else
-	(void)sample;
-	(void)status;
-	(void)held;
-#endif
-}
-
 void VPADController::update_motion(VPADStatus_t& status)
 {
 	if (has_motion())
@@ -419,7 +340,6 @@ void VPADController::update_motion(VPADStatus_t& status)
 		}
 		else
 			m_motion_hold = false;
-		WriteMotionDebug(motionSample, status, m_motion_hold);
 		return;
 	}
 

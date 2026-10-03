@@ -250,17 +250,22 @@ struct MotionPlusData
 	bool rest_initialized = false;
 	std::chrono::steady_clock::time_point rest_started{}, rest_blocked_until{};
 	glm::vec3 rest_gravity{};
-	glm::vec2 rest_ir{};
-	bool rest_has_ir = false;
 	bool slow_roll = false;
 	bool slow_pitch = false;
 	bool slow_yaw = false;
 	bool extension_connected = false;
 
-	// Zero offset learned while the gyro holds steady. The factory zero of some
-	// MotionPlus attachments is off by more than the fusion's own bias filter accepts.
+	// Resting gyro counts (expanded to 16-bit: yaw, roll, pitch), learned while
+	// every axis is in slow mode. Each sample subtracts these counts through the
+	// calibration of the mode that axis is actually in. A single rad/s offset
+	// learned in slow mode is about 1 rad/s wrong for the same counts in fast mode,
+	// and that error accumulated on every swing.
+	glm::vec3 rest_raw{};
+	glm::vec3 rest_raw_sum{};
+	// Slow-mode reading of rest_raw, in the calibrated pitch, roll, yaw order. Logged
+	// only; the sample path does not subtract it a second time.
 	glm::vec3 rest_offset{};
-	glm::vec3 rest_sum{}, rest_min{}, rest_max{};
+	glm::vec3 rest_sum{}, rest_sum_sq{};
 	uint32 rest_samples = 0;
 };
 

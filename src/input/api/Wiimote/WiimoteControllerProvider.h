@@ -7,8 +7,11 @@
 #include "input/api/ControllerProvider.h"
 #include "input/api/ControllerState.h"
 
+#include <atomic>
+#include <chrono>
 #include <list>
 #include <variant>
+#include <vector>
 #include <boost/ptr_container/ptr_vector.hpp>
 
 #ifndef HAS_WIIMOTE
@@ -78,8 +81,9 @@ public:
 			std::pair<sint32, sint32> indices{ 0,1 };
 		}ir_camera{};
 
-		// Last report mode we'd asked the Wiimote for. Avoids flooding 0x12 on
-		// every memory read / status while the desired mode is unchanged.
+		// Last report mode queued for this remote. Not proof the remote accepted it:
+		// a Wiimote that was already streaming can ignore the first 0x12, and this
+		// field used to suppress every retry. Acceptance is tracked on the device.
 		InputReportId m_requested_report = kNone;
 
 		std::optional<MotionPlusData> m_motion_plus;
@@ -106,6 +110,28 @@ private:
     std::condition_variable m_connectionCond;
 	std::vector<WiimoteDevicePtr> m_connectedDevices;
 	std::mutex m_connectedDeviceMutex;
+
+	// A remote already connected when the provider starts is already inside a
+	// reporting mode. Programming the IR camera in that first burst is ignored,
+	// and remembering the request then skips every later attempt. The handshake
+	// waits until a core-button report is observed after our own write, then
+	// programs the camera, then waits until the final report id comes back.
+	enum class PointerStartup : uint8
+	{
+		PauseStream,
+		WaitCore,
+		ArmCamera,
+		WaitReport,
+		Ready
+	};
+	struct OutgoingReport
+	{
+		size_t index = 0;
+		std::vector<uint8> data;
+		// Non-zero marks output 0x12. Published only after the HID write succeeds.
+		uint32 mode_cookie = 0;
+	};
+
 	struct Wiimote
 	{
 		Wiimote(WiimoteDevicePtr device)
@@ -123,6 +149,16 @@ private:
 		std::shared_mutex mutex;
 		WiimoteState state{};
 		std::chrono::steady_clock::time_point last_startup_probe{};
+		PointerStartup pointer_startup = PointerStartup::PauseStream;
+		std::chrono::steady_clock::time_point pointer_step_started{};
+		InputReportId expected_report = kNone;
+		uint32 expected_cookie = 0;
+		uint8 pointer_retries = 0;
+		uint8 pointer_mismatch = 0;
+		std::atomic<uint32> next_cookie{0};
+		std::atomic<uint32> published_cookie{0};
+		std::atomic<uint8> published_report{0};
+		std::atomic<std::chrono::steady_clock::rep> published_ns{0};
 		// The hardware only echoes the low 16 address bits in read replies.
 		// Keep the full addresses in send order to distinguish A40020/A60020.
 		std::mutex pending_reads_mutex;
@@ -133,7 +169,7 @@ private:
 	};
 	boost::ptr_vector<Wiimote> m_wiimotes;
 
-	std::list<std::pair<size_t,std::vector<uint8>>> m_write_queue;
+	std::list<OutgoingReport> m_write_queue;
 	std::mutex m_writer_mutex;
 	std::condition_variable m_writer_cond;
 
@@ -143,10 +179,13 @@ private:
 
 	void calibrate(size_t index);
 	// force=true rewrites the IR registers even when the software mode is unchanged
-	// (needed after MotionPlus activation, which can leave the camera dark).
+	// (needed after the pointer handshake, and after MotionPlus activation).
 	IRMode set_ir_camera(size_t index, bool state, bool force = false);
 
-	void send_packet(size_t index, std::vector<uint8> data);
+	void send_packet(size_t index, std::vector<uint8> data, uint32 mode_cookie = 0);
+	uint32 arm_pointer_report(size_t index, InputReportId report);
+	void advance_pointer_startup(size_t index, InputReportId id, std::chrono::steady_clock::time_point report_time);
+	void restart_pointer_startup(size_t index);
 	void send_read_packet(size_t index, MemoryType type, RegisterAddress address, uint16 size);
 	void send_write_packet(size_t index, MemoryType type, RegisterAddress address, const std::vector<uint8>& data);
 

@@ -17,10 +17,33 @@
 
 namespace
 {
+// Angular rate from an already expanded 16-bit count. Reports are 14-bit;
+// calibration zeros and scales are 16-bit.
+float MotionPlusAxisRate(float expanded, const MotionPlusData::CalibrationBlock& block, size_t axis)
+{
+	const int span = int(block.scale[axis]) - int(block.zero[axis]);
+	if (span == 0 || block.degrees_div_6 == 0)
+		return 0.0f;
+	return ((expanded - float(block.zero[axis])) / float(span)) *
+		(float(block.degrees_div_6) * 6.0f) * (3.14159265358979323846f / 180.0f);
+}
+
+// Slow-mode bias of the learned rest counts, in calibrated pitch, roll, yaw order.
+glm::vec3 MotionPlusSlowBias(const MotionPlusData& mp)
+{
+	return glm::vec3(
+		-MotionPlusAxisRate(mp.rest_raw.z, mp.slow_calibration, 2),
+		MotionPlusAxisRate(mp.rest_raw.y, mp.slow_calibration, 1),
+		-MotionPlusAxisRate(mp.rest_raw.x, mp.slow_calibration, 0));
+}
+
 // Integrate at the physical gyro cadence, independently of Nunchuk interleave
 // and game FPS. Timestamp each sample before parsing/logging.
+// expanded_counts is yaw, roll, pitch already shifted to 16-bit. It is only
+// accumulated while learn_zero is set.
 void AcceptMotionPlusSample(WiimoteControllerProvider::WiimoteState& state,
-    const glm::vec3& measured, std::chrono::steady_clock::time_point stamp,
+    const glm::vec3& measured, const glm::vec3& expanded_counts,
+    std::chrono::steady_clock::time_point stamp,
     bool all_slow, bool learn_zero, size_t index)
 {
     auto& mp = *state.m_motion_plus;
@@ -32,58 +55,66 @@ void AcceptMotionPlusSample(WiimoteControllerProvider::WiimoteState& state,
     if (have_gravity)
         gravity = glm::vec3(state.m_acceleration) / scale;
     const float magnitude = glm::length(gravity);
-    const glm::vec3 residual = measured - mp.rest_offset;
-    const float max_rate = std::max({std::abs(residual.x), std::abs(residual.y), std::abs(residual.z)});
-    // Factory zeros can be ~0.3 rad/s off on stationary remotes. Once learned,
-    // never accept a sustained turn as a new zero.
-    const float rest_limit = mp.rest_initialized ? 0.03f : 0.5f;
-    if (max_rate > (mp.rest_initialized ? 0.1f : 0.5f))
-        mp.rest_blocked_until = stamp + std::chrono::milliseconds(750);
-    int ir_count = 0;
-    for (const auto& dot : state.ir_camera.dots)
-        ir_count += dot.visible ? 1 : 0;
-    const bool have_ir = ir_count >= 2;
+    // A remote lying still has constant gravity and a gyro that only shows sensor
+    // noise around its zero. Factory zeros can be 0.7 rad/s off and drift while
+    // the remote warms up, so the zero is relearned on every still window,
+    // however far it is from the previous one. Noise is judged by the standard
+    // deviation: a single count of slow-mode noise is 0.001 rad/s and the
+    // min-max spread of a resting remote exceeds 0.025 rad/s. The IR camera is
+    // not consulted: face-down on a table it sees flickering reflections.
+    constexpr float kMaxZero = 1.0f;          // rad/s, larger than any factory error seen
+    constexpr float kMaxNoiseStdDev = 0.012f; // rad/s per axis; hand tremor is several times larger
+    constexpr float kMaxTilt = 0.05f;         // g, about 3 degrees
+    const bool jolt = mp.has_last_rate && glm::length(measured - mp.last_rate) > 0.15f;
+    if (jolt)
+        mp.rest_blocked_until = stamp + std::chrono::milliseconds(500);
     const bool can_learn = learn_zero && all_slow && have_gravity &&
-        magnitude > 0.9f && magnitude < 1.1f && max_rate < rest_limit &&
+        magnitude > 0.9f && magnitude < 1.1f &&
+        std::max({std::abs(measured.x), std::abs(measured.y), std::abs(measured.z)}) < kMaxZero &&
         stamp >= mp.rest_blocked_until;
     if (!can_learn)
         mp.rest_samples = 0;
     else
     {
-        if (mp.rest_samples == 0)
+        if (mp.rest_samples == 0 || glm::length(gravity - mp.rest_gravity) > kMaxTilt)
         {
             mp.rest_started = stamp;
             mp.rest_gravity = gravity;
-            mp.rest_ir = state.ir_camera.position;
-            mp.rest_has_ir = have_ir;
-            mp.rest_min = mp.rest_max = measured;
             mp.rest_sum = {};
-        }
-        mp.rest_min = glm::min(mp.rest_min, measured);
-        mp.rest_max = glm::max(mp.rest_max, measured);
-        const glm::vec3 spread = mp.rest_max - mp.rest_min;
-        const bool moved = glm::length(gravity - mp.rest_gravity) > 0.025f ||
-            (mp.rest_has_ir && (!have_ir || glm::length(state.ir_camera.position - mp.rest_ir) > 0.004f));
-        if (moved || std::max({spread.x, spread.y, spread.z}) > 0.025f)
+            mp.rest_sum_sq = {};
+            mp.rest_raw_sum = {};
             mp.rest_samples = 0;
-        else
+        }
+        mp.rest_sum += measured;
+        mp.rest_sum_sq += measured * measured;
+        mp.rest_raw_sum += expanded_counts;
+        ++mp.rest_samples;
+        if (mp.rest_samples >= 40 && stamp - mp.rest_started >= std::chrono::seconds(1))
         {
-            mp.rest_sum += measured;
-            ++mp.rest_samples;
-            if (mp.rest_samples >= 80 && stamp - mp.rest_started >= std::chrono::seconds(1))
+            const float n = float(mp.rest_samples);
+            const glm::vec3 variance = glm::max(mp.rest_sum_sq / n - (mp.rest_sum / n) * (mp.rest_sum / n), glm::vec3(0.0f));
+            const float noise = std::sqrt(std::max({variance.x, variance.y, variance.z}));
+            const glm::vec3 raw_mean = mp.rest_raw_sum / n;
+            mp.rest_samples = 0;
+            if (noise <= kMaxNoiseStdDev)
             {
-                const glm::vec3 candidate = mp.rest_sum / float(mp.rest_samples);
-                mp.rest_offset = mp.rest_initialized ? glm::mix(mp.rest_offset, candidate, 0.25f) : candidate;
                 const bool first_zero = !mp.rest_initialized;
+                const glm::vec3 previous = MotionPlusSlowBias(mp);
+                mp.rest_raw = first_zero ? raw_mean : glm::mix(mp.rest_raw, raw_mean, 0.5f);
                 mp.rest_initialized = true;
-                mp.rest_samples = 0;
-                if (first_zero || glm::length(residual) > 0.01f)
-                    cemuLog_log(LogType::Force, "Wiimote slot {} MotionPlus stationary zero {:.3f},{:.3f},{:.3f} rad/s",
-                        index, mp.rest_offset.x, mp.rest_offset.y, mp.rest_offset.z);
+                mp.rest_offset = MotionPlusSlowBias(mp);
+                const float change = glm::length(mp.rest_offset - previous);
+                if (first_zero || change > 0.01f)
+                    cemuLog_log(LogType::Force, "Wiimote slot {} MotionPlus stationary counts {:.0f},{:.0f},{:.0f} slow-bias {:.3f},{:.3f},{:.3f} rad/s (noise {:.4f}, change {:.3f})",
+                        index, mp.rest_raw.x, mp.rest_raw.y, mp.rest_raw.z,
+                        mp.rest_offset.x, mp.rest_offset.y, mp.rest_offset.z, noise, change);
             }
         }
     }
-    const glm::vec3 corrected = measured - mp.rest_offset;
+    // measured is already expressed relative to the learned rest counts, using
+    // the calibration of whichever mode each axis is in. Subtracting rest_offset
+    // here would apply the slow-mode bias to fast-mode samples again.
+    const glm::vec3 corrected = measured;
     if (mp.last_gyro_timestamp != std::chrono::steady_clock::time_point{})
     {
         const float dt = std::chrono::duration<float>(stamp - mp.last_gyro_timestamp).count();
@@ -159,7 +190,7 @@ WiimoteControllerProvider::WiimoteControllerProvider()
 	// The input UI can run without a game, before Cemu opens its log file.
 	// Keep the experimental hardware diagnostics visible in that case.
 	cemuLog_createLogFile(false);
-	cemuLog_log(LogType::Force, "Wiimote motion recovery experiment: latest-rate 200 Hz sampler, single physical zero, optical heading");
+	cemuLog_log(LogType::Force, "Wiimote motion recovery experiment: latest-rate 200 Hz sampler, per-mode count zero, optical heading");
 	m_reader_thread = std::thread(&WiimoteControllerProvider::reader_thread, this);
 	m_writer_thread = std::thread(&WiimoteControllerProvider::writer_thread, this);
 	m_connectionThread = std::thread(&WiimoteControllerProvider::connectionThread, this);
@@ -383,7 +414,7 @@ bool WiimoteControllerProvider::can_send_speaker(size_t index)
 	uint32 queued = 0;
 	for (const auto& packet : m_write_queue)
 	{
-		if (packet.first == index && !packet.second.empty() && packet.second[0] == kSpeakerData)
+		if (packet.index == index && !packet.data.empty() && packet.data[0] == kSpeakerData)
 			++queued;
 	}
 	return queued < 3;
@@ -404,7 +435,7 @@ bool WiimoteControllerProvider::send_speaker_data(size_t index, const uint8* dat
 	auto oldest = m_write_queue.end();
 	for (auto it = m_write_queue.begin(); it != m_write_queue.end(); ++it)
 	{
-		if (it->first == index && !it->second.empty() && it->second[0] == kSpeakerData)
+		if (it->index == index && !it->data.empty() && it->data[0] == kSpeakerData)
 		{
 			if (oldest == m_write_queue.end())
 				oldest = it;
@@ -413,7 +444,7 @@ bool WiimoteControllerProvider::send_speaker_data(size_t index, const uint8* dat
 	}
 	if (queued >= 6 && oldest != m_write_queue.end())
 		m_write_queue.erase(oldest);
-	m_write_queue.emplace_back(index, std::move(packet));
+	m_write_queue.push_back(OutgoingReport{index, std::move(packet), 0});
 	m_writer_cond.notify_one();
 	return true;
 }
@@ -534,7 +565,7 @@ void WiimoteControllerProvider::reader_thread()
 			{
 				wiimote.last_startup_probe = report_timestamp;
 				std::scoped_lock writer_lock(m_writer_mutex);
-				m_write_queue.emplace_back(index, std::vector<uint8>{kStatusRequest, 0x00});
+				m_write_queue.push_back(OutgoingReport{index, std::vector<uint8>{kStatusRequest, 0x00}, 0});
 				m_writer_cond.notify_one();
 			}
 
@@ -1049,22 +1080,27 @@ void WiimoteControllerProvider::reader_thread()
 						if (!invalid_sentinel)
 							mp.orientation = glm::vec3(raw_yaw, raw_roll, raw_pitch);
 
-						auto rate = [](uint16 raw, const MotionPlusData::CalibrationBlock& block, size_t axis)
+						const auto expand = [](uint16 raw)
 						{
-							const int span = int(block.scale[axis]) - int(block.zero[axis]);
-							if (span == 0 || block.degrees_div_6 == 0)
-								return 0.0f;
-							// Gyro reports are 14-bit; calibration is 16-bit.
-							const int expanded_raw = (int(raw) << 2) | ((raw & 1) ? 3 : 0);
-							return (float(expanded_raw - int(block.zero[axis])) / float(span)) *
-								(float(block.degrees_div_6) * 6.0f) * (3.14159265358979323846f / 180.0f);
+							return float((int(raw) << 2) | ((raw & 1) ? 3 : 0));
+						};
+						// Yaw, roll, pitch. The same rest counts are removed with the
+						// calibration block of the mode this axis is in right now.
+						const glm::vec3 expanded(expand(raw_yaw), expand(raw_roll), expand(raw_pitch));
+						const auto corrected_rate = [&](uint16 raw, float rest_count, const MotionPlusData::CalibrationBlock& block, size_t axis)
+						{
+							const float value = MotionPlusAxisRate(expand(raw), block, axis);
+							if (!mp.rest_initialized)
+								return value;
+							return value - MotionPlusAxisRate(rest_count, block, axis);
 						};
 						const auto& yaw_calibration = mp.slow_yaw ? mp.slow_calibration : mp.fast_calibration;
 						const auto& roll_calibration = mp.slow_roll ? mp.slow_calibration : mp.fast_calibration;
 						const auto& pitch_calibration = mp.slow_pitch ? mp.slow_calibration : mp.fast_calibration;
-						const glm::vec3 calibrated(-rate(raw_pitch, pitch_calibration, 2),
-							rate(raw_roll, roll_calibration, 1),
-							-rate(raw_yaw, yaw_calibration, 0));
+						const glm::vec3 calibrated(
+							-corrected_rate(raw_pitch, mp.rest_raw.z, pitch_calibration, 2),
+							corrected_rate(raw_roll, mp.rest_raw.y, roll_calibration, 1),
+							-corrected_rate(raw_yaw, mp.rest_raw.x, yaw_calibration, 0));
 
 
 						// Delay only a large jump accompanied by a range transition.
@@ -1089,9 +1125,9 @@ void WiimoteControllerProvider::reader_thread()
 									cemuLog_log(LogType::Force, "Wiimote slot {} isolated MotionPlus range spike rejected (count={})", index, mp.rejected_spikes);
 								}
 								else
-									AcceptMotionPlusSample(new_state, mp.held_rate, mp.held_timestamp, false, false, index);
+									AcceptMotionPlusSample(new_state, mp.held_rate, {}, mp.held_timestamp, false, false, index);
 								mp.has_held_rate = false;
-								AcceptMotionPlusSample(new_state, calibrated, report_timestamp, slow_flags == 7, false, index);
+								AcceptMotionPlusSample(new_state, calibrated, expanded, report_timestamp, slow_flags == 7, false, index);
 							}
 							else if (mp.has_last_rate && slow_flags != mp.last_slow_flags && !near_rate(calibrated, mp.last_rate))
 							{
@@ -1101,7 +1137,7 @@ void WiimoteControllerProvider::reader_thread()
 								mp.rest_samples = 0;
 							}
 							else
-								AcceptMotionPlusSample(new_state, calibrated, report_timestamp, slow_flags == 7, true, index);
+								AcceptMotionPlusSample(new_state, calibrated, expanded, report_timestamp, slow_flags == 7, true, index);
 							mp.last_slow_flags = slow_flags;
 							gyro[0] = mp.angular_velocity.x;
 							gyro[1] = mp.angular_velocity.y;
@@ -1333,6 +1369,8 @@ void WiimoteControllerProvider::reader_thread()
 
 			if (update_report)
 				update_report_type(index);
+			// After the copy is committed, so this handshake is not overwritten by new_state.
+			advance_pointer_startup(index, id, report_timestamp);
 		}
 
 		lock.unlock();
@@ -1604,13 +1642,10 @@ void WiimoteControllerProvider::try_activate_motion_plus(size_t index, WiimoteSt
 	set_motion_plus(index, true);
 	state.m_motion_plus->activated = true;
 	cemuLog_log(LogType::Force, "Wiimote slot {} MotionPlus activation sent", index);
-	// MotionPlus enable writes can leave the IR camera dark even when the
-	// software mode was already basic. Rewrite the registers and report once.
-	state.ir_camera.mode = set_ir_camera(index, true, true);
-	{
-		std::shared_lock sync_lock(m_wiimotes[index].mutex);
-		state.m_requested_report = m_wiimotes[index].state.m_requested_report;
-	}
+	// Those enable writes can leave the IR camera dark, and they often land while
+	// the remote is still streaming. Restart the handshake so the camera registers
+	// are written only after a core-button report proves the remote is listening.
+	restart_pointer_startup(index);
 }
 
 void WiimoteControllerProvider::set_motion_plus(size_t index, bool state)
@@ -1644,6 +1679,7 @@ void WiimoteControllerProvider::writer_thread()
 
 		auto index = (size_t)-1;
 		std::vector<uint8> data;
+		uint32 mode_cookie = 0;
 		std::shared_lock device_lock(m_device_mutex);
 
 		// get first packet of device which is ready to be sent
@@ -1651,24 +1687,25 @@ void WiimoteControllerProvider::writer_thread()
 		std::array<bool, 8> waiting{};
 		for (auto it = m_write_queue.begin(); it != m_write_queue.end(); ++it)
 		{
-			if (it->first >= m_wiimotes.size() || it->first >= waiting.size() || waiting[it->first])
+			if (it->index >= m_wiimotes.size() || it->index >= waiting.size() || waiting[it->index])
 				continue;
 
 			// A packet that is not due yet blocks later packets for the same remote,
 			// so speaker audio cannot overtake the configuration that enables it.
 			// Speaker data itself is paced at 13 ms (20 bytes of 3000 Hz ADPCM).
-			const uint32 delay = (!it->second.empty() && it->second[0] == kSpeakerData)
+			const uint32 delay = (!it->data.empty() && it->data[0] == kSpeakerData)
 				? 13
-				: m_wiimotes[it->first].data_delay.load(std::memory_order_relaxed);
-			if (now < m_wiimotes[it->first].data_ts + std::chrono::milliseconds(delay))
+				: m_wiimotes[it->index].data_delay.load(std::memory_order_relaxed);
+			if (now < m_wiimotes[it->index].data_ts + std::chrono::milliseconds(delay))
 			{
-				waiting[it->first] = true;
+				waiting[it->index] = true;
 				continue;
 			}
-			if (now >= m_wiimotes[it->first].data_ts + std::chrono::milliseconds(delay))
+			if (now >= m_wiimotes[it->index].data_ts + std::chrono::milliseconds(delay))
 			{
-				index = it->first;
-				data = it->second;
+				index = it->index;
+				data = std::move(it->data);
+				mode_cookie = it->mode_cookie;
 				m_write_queue.erase(it);
 				break;
 			}
@@ -1696,7 +1733,17 @@ void WiimoteControllerProvider::writer_thread()
 				wiimote.pending_reads.clear();
 			}
 			else
+			{
 				wiimote.data_ts = std::chrono::high_resolution_clock::now();
+				// Publish only after the HID write. Reports already buffered by the
+				// adapter must not count as the remote accepting this mode change.
+				if (mode_cookie != 0 && data.size() >= 3 && data[0] == kType)
+				{
+					wiimote.published_report.store(data[2], std::memory_order_relaxed);
+					wiimote.published_ns.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
+					wiimote.published_cookie.store(mode_cookie, std::memory_order_release);
+				}
+			}
 		}
 		device_lock.unlock();
 
@@ -1712,6 +1759,12 @@ void WiimoteControllerProvider::calibrate(size_t index)
 
 void WiimoteControllerProvider::update_report_type(size_t index)
 {
+	auto& wm = m_wiimotes[index];
+	// The handshake owns report 0x12 until the remote has shown core buttons.
+	// Sending 0x33/0x37 here used to race that pause and get ignored.
+	if (wm.pointer_startup == PointerStartup::PauseStream || wm.pointer_startup == PointerStartup::WaitCore)
+		return;
+
 	std::shared_lock read_lock(m_wiimotes[index].mutex);
 	auto& state = m_wiimotes[index].state;
 
@@ -1750,17 +1803,29 @@ void WiimoteControllerProvider::update_report_type(size_t index)
 	else
 		report_type = kDataCore;
 
-	if (state.m_requested_report == report_type)
+	if (state.m_requested_report == report_type && wm.pointer_startup != PointerStartup::ArmCamera)
 		return;
 
 	state.m_requested_report = report_type;
 	cemuLog_log(LogType::Force, "Wiimote slot {} requesting input report {:#04x} (extension={}, IR={})",
 		index, uint8(report_type), extension, ir);
-	send_packet(index, {kType, 0x04, report_type});
+	const uint32 cookie = arm_pointer_report(index, report_type);
+	wm.pointer_startup = PointerStartup::WaitReport;
+	read_lock.unlock();
+	send_packet(index, {kType, 0x04, report_type}, cookie);
 }
 
 IRMode WiimoteControllerProvider::set_ir_camera(size_t index, bool state, bool force)
 {
+	auto& wm = m_wiimotes[index];
+	// Register writes during the initial stream are the ones the remote drops.
+	// Wait until advance_pointer_startup has seen core-button reports.
+	if (wm.pointer_startup == PointerStartup::PauseStream || wm.pointer_startup == PointerStartup::WaitCore)
+	{
+		std::shared_lock read_lock(wm.mutex);
+		return wm.state.ir_camera.mode;
+	}
+
 	std::shared_lock read_lock(m_wiimotes[index].mutex);
 	auto& wiimote_state = m_wiimotes[index].state;
 
@@ -1801,7 +1866,7 @@ IRMode WiimoteControllerProvider::set_ir_camera(size_t index, bool state, bool f
 	return mode;
 }
 
-void WiimoteControllerProvider::send_packet(size_t index, std::vector<uint8> data)
+void WiimoteControllerProvider::send_packet(size_t index, std::vector<uint8> data, uint32 mode_cookie)
 {
 	cemu_assert(data.size() > 1);
 
@@ -1812,8 +1877,135 @@ void WiimoteControllerProvider::send_packet(size_t index, std::vector<uint8> dat
 	device_lock.unlock();
 
 	std::unique_lock lock(m_writer_mutex);
-	m_write_queue.emplace_back(index, data);
+	if (mode_cookie != 0)
+	{
+		// A stale 0x12 still in the queue would be published first and could be
+		// mistaken for the mode change this cookie is waiting on.
+		m_write_queue.remove_if([index](const OutgoingReport& packet)
+		{
+			return packet.index == index && !packet.data.empty() && packet.data[0] == kType;
+		});
+	}
+	m_write_queue.push_back(OutgoingReport{index, std::move(data), mode_cookie});
 	m_writer_cond.notify_one();
+}
+
+uint32 WiimoteControllerProvider::arm_pointer_report(size_t index, InputReportId report)
+{
+	auto& wm = m_wiimotes[index];
+	uint32 cookie = wm.next_cookie.fetch_add(1, std::memory_order_relaxed) + 1;
+	if (cookie == 0)
+		cookie = wm.next_cookie.fetch_add(1, std::memory_order_relaxed) + 1;
+	wm.expected_cookie = cookie;
+	wm.expected_report = report;
+	wm.pointer_step_started = std::chrono::steady_clock::now();
+	return cookie;
+}
+
+void WiimoteControllerProvider::restart_pointer_startup(size_t index)
+{
+	auto& wm = m_wiimotes[index];
+	if (wm.pointer_startup == PointerStartup::PauseStream || wm.pointer_startup == PointerStartup::WaitCore)
+		return;
+	wm.pointer_startup = PointerStartup::PauseStream;
+	wm.pointer_mismatch = 0;
+	cemuLog_log(LogType::Force, "Wiimote slot {} repeating pointer setup after MotionPlus enable", index);
+}
+
+void WiimoteControllerProvider::advance_pointer_startup(size_t index, InputReportId id,
+	std::chrono::steady_clock::time_point report_time)
+{
+	auto& wm = m_wiimotes[index];
+	const auto is_data_report = [](InputReportId report)
+	{
+		return report >= kDataCore && report <= kDataCoreAccIRExt;
+	};
+	const auto published_cookie = wm.published_cookie.load(std::memory_order_acquire);
+	const auto published_time = std::chrono::steady_clock::time_point(
+		std::chrono::steady_clock::duration(wm.published_ns.load(std::memory_order_relaxed)));
+	const bool write_published = wm.expected_cookie != 0 && published_cookie == wm.expected_cookie &&
+		wm.published_report.load(std::memory_order_relaxed) == uint8(wm.expected_report);
+	const bool accepted = write_published && id == wm.expected_report && report_time > published_time;
+	const auto now = std::chrono::steady_clock::now();
+	const bool timed_out = wm.pointer_step_started != std::chrono::steady_clock::time_point{} &&
+		(write_published ? now - published_time > std::chrono::milliseconds(700)
+			: now - wm.pointer_step_started > std::chrono::seconds(2));
+
+	switch (wm.pointer_startup)
+	{
+	case PointerStartup::PauseStream:
+	{
+		// Continuous core buttons. The remote was often already in 0x37; camera
+		// register writes in that stream are rejected, and one 0x12 was never repeated.
+		const uint32 cookie = arm_pointer_report(index, kDataCore);
+		wm.pointer_startup = PointerStartup::WaitCore;
+		if (wm.pointer_retries < 8)
+			cemuLog_log(LogType::Force, "Wiimote slot {} pointer setup attempt {}: core report before IR",
+				index, wm.pointer_retries + 1);
+		send_packet(index, {kType, 0x04, kDataCore}, cookie);
+		break;
+	}
+	case PointerStartup::WaitCore:
+		if (accepted)
+		{
+			wm.pointer_startup = PointerStartup::ArmCamera;
+			// force rewrites the camera even when software already says basic IR.
+			set_ir_camera(index, true, true);
+			wm.pointer_mismatch = 0;
+		}
+		else if (timed_out)
+		{
+			if (wm.pointer_retries < 255)
+				++wm.pointer_retries;
+			// Two pauses that the remote never answered: write the camera in the
+			// stream it is already sending, instead of waiting forever for 0x30.
+			if ((wm.pointer_retries % 3) == 2)
+			{
+				wm.pointer_startup = PointerStartup::ArmCamera;
+				set_ir_camera(index, true, true);
+			}
+			else
+				wm.pointer_startup = PointerStartup::PauseStream;
+			if (wm.pointer_retries <= 8)
+				cemuLog_log(LogType::Force, "Wiimote slot {} pointer setup was not accepted; repeating IR camera init", index);
+		}
+		break;
+	case PointerStartup::ArmCamera:
+		set_ir_camera(index, true, true);
+		break;
+	case PointerStartup::WaitReport:
+		if (accepted)
+		{
+			wm.pointer_startup = PointerStartup::Ready;
+			wm.pointer_retries = 0;
+			wm.pointer_mismatch = 0;
+			cemuLog_log(LogType::Force, "Wiimote slot {} pointer report {:#04x} accepted", index, uint8(id));
+		}
+		else if (timed_out)
+		{
+			if (wm.pointer_retries < 255)
+				++wm.pointer_retries;
+			wm.pointer_startup = PointerStartup::PauseStream;
+			if (wm.pointer_retries <= 8)
+				cemuLog_log(LogType::Force, "Wiimote slot {} pointer setup was not accepted; repeating IR camera init", index);
+		}
+		break;
+	case PointerStartup::Ready:
+		// Memory replies sit between data reports. They must not clear the streak.
+		if (!is_data_report(id))
+			break;
+		if (wm.expected_report == kNone || id == wm.expected_report)
+			wm.pointer_mismatch = 0;
+		else if (wm.pointer_mismatch < 255)
+			++wm.pointer_mismatch;
+		if (wm.pointer_mismatch >= 8)
+		{
+			wm.pointer_mismatch = 0;
+			wm.pointer_startup = PointerStartup::PauseStream;
+			cemuLog_log(LogType::Force, "Wiimote slot {} pointer report mode lost; repeating IR camera init", index);
+		}
+		break;
+	}
 }
 
 void WiimoteControllerProvider::send_read_packet(size_t index, MemoryType type, RegisterAddress address, uint16 size)

@@ -37,7 +37,9 @@ This was vibe-coded. I do not morally authorize the official development team to
 Talk to me on Discord! It's HeroiAmarelo
 
 FAQ:
+
 The name of the project is offensive. Can you change it?
-- No. The software works and it's open source. You can decide if you accept the name and use it or not.
+No. The software works and it's open source. You can decide if you accept the name and use it or not.
+
 Are you a real developer or just a vibe-coder who can't read his code?
-- I'm just a vibe-coder who can't read the code. But the code works afaik.
+I'm just a vibe-coder who can't read the code. But the code works afaik.
